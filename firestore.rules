@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection doc
+    match /test/{testId} {
+      allow get, list, create, update: if true;
+    }
+
+    // Products Catalog & Live Stock
+    match /products/{productId} {
+      allow get: if isValidId(productId);
+      allow list: if true;
+      allow create, update: if isValidId(productId) &&
+        incoming().name is string && incoming().name.size() <= 200 &&
+        incoming().sku is string && incoming().sku.size() <= 64 &&
+        incoming().price is number &&
+        incoming().stock is number;
+      allow delete: if isValidId(productId);
+    }
+
+    // Sales Records (Seed ids like tx-10001 are blocked to prevent legacy auto-seeding)
+    match /sales/{saleId} {
+      allow get: if isValidId(saleId);
+      allow list: if true;
+      allow create, update: if isValidId(saleId) &&
+        !saleId.matches('^tx-100[0-9]{2}$') &&
+        incoming().receiptNumber is string && incoming().receiptNumber.size() <= 64 &&
+        incoming().total is number;
+      allow delete: if isValidId(saleId);
+    }
+
+    // Purchase Orders Records (Seed ids like po-101 are blocked to prevent legacy auto-seeding)
+    match /purchases/{purchaseId} {
+      allow get: if isValidId(purchaseId);
+      allow list: if true;
+      allow create, update: if isValidId(purchaseId) &&
+        !purchaseId.matches('^po-10[0-9]$') &&
+        incoming().poNumber is string && incoming().poNumber.size() <= 64 &&
+        incoming().supplierName is string && incoming().supplierName.size() <= 200 &&
+        incoming().totalCost is number;
+      allow delete: if isValidId(purchaseId);
+    }
+
+    // Settings
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow create, update: if isValidId(settingId) &&
+        incoming().storeName is string && incoming().storeName.size() <= 200;
+      allow delete: if false;
+    }
+
+    // Operator Profile (Rahel Fira)
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if true;
+      allow create, update: if isValidId(userId) &&
+        incoming().name is string && incoming().name.size() <= 128 &&
+        incoming().email is string && incoming().email.size() <= 128;
+      allow delete: if isValidId(userId);
+    }
+  }
+}

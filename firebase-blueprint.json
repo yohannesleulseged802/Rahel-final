@@ -1,0 +1,142 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Stationery catalog product with inventory stock tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "sku": { "type": "string", "maxLength": 64 },
+        "barcode": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 100 },
+        "price": { "type": "number" },
+        "costPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 32 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "sku", "barcode", "price", "stock"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Internal sales transaction record with line items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "receiptNumber": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "cashierId": { "type": "string", "maxLength": 128 },
+        "cashierName": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "customerEmail": { "type": "string", "maxLength": 128 },
+        "subtotal": { "type": "number" },
+        "discountTotal": { "type": "number" },
+        "taxTotal": { "type": "number" },
+        "taxRate": { "type": "number" },
+        "total": { "type": "number" },
+        "costTotal": { "type": "number" },
+        "grossProfit": { "type": "number" },
+        "status": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "noReceipt": { "type": "boolean" },
+        "receiptPreference": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "receiptNumber", "timestamp", "total", "status"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Supplier purchase order and restock invoice record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "poNumber": { "type": "string", "maxLength": 64 },
+        "supplierName": { "type": "string", "maxLength": 200 },
+        "supplierInvoice": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "operatorId": { "type": "string", "maxLength": 128 },
+        "operatorName": { "type": "string", "maxLength": 128 },
+        "totalCost": { "type": "number" },
+        "itemCount": { "type": "number" },
+        "status": { "type": "string", "maxLength": 32 },
+        "paymentStatus": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "poNumber", "supplierName", "totalCost", "itemCount", "status", "paymentStatus"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "System-wide store configuration and tax rates",
+      "type": "object",
+      "properties": {
+        "storeName": { "type": "string", "maxLength": 200 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "address": { "type": "string", "maxLength": 300 },
+        "phone": { "type": "string", "maxLength": 64 },
+        "email": { "type": "string", "maxLength": 128 },
+        "tinNumber": { "type": "string", "maxLength": 64 },
+        "currencySymbol": { "type": "string", "maxLength": 8 },
+        "taxRate": { "type": "number" },
+        "taxEnabled": { "type": "boolean" },
+        "taxIncludedInPrice": { "type": "boolean" },
+        "receiptHeader": { "type": "string", "maxLength": 200 },
+        "receiptFooterMessage": { "type": "string", "maxLength": 500 },
+        "receiptPaperSize": { "type": "string", "maxLength": 32 },
+        "autoPrintReceipt": { "type": "boolean" },
+        "showCashierOnReceipt": { "type": "boolean" },
+        "showTinOnReceipt": { "type": "boolean" },
+        "allowNoReceiptOption": { "type": "boolean" },
+        "defaultReceiptOption": { "type": "string", "maxLength": 32 },
+        "lowStockThreshold": { "type": "number" },
+        "negativeStockAllowed": { "type": "boolean" },
+        "defaultMarkupPercent": { "type": "number" },
+        "barcodeFormat": { "type": "string", "maxLength": 32 },
+        "inactivityTimeoutMinutes": { "type": "number" },
+        "requirePinForRefund": { "type": "boolean" },
+        "soundEffects": { "type": "boolean" }
+      },
+      "required": ["storeName", "taxRate", "lowStockThreshold"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Authorized workstation operator profile with secure salted credentials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 128 },
+        "passwordHash": { "type": "string", "maxLength": 128 },
+        "passwordSalt": { "type": "string", "maxLength": 128 },
+        "pinHash": { "type": "string", "maxLength": 128 },
+        "pinSalt": { "type": "string", "maxLength": 128 },
+        "avatarColor": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "email"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Stationery catalog products with real-time stock counts"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Internal sales transaction records"
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Internal purchase orders and supplier restock records"
+    },
+    "/settings/{settingId}": {
+      "schema": "StoreSettings",
+      "description": "Store configuration and tax settings"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Operator profile and credentials synced across workstations"
+    }
+  }
+}

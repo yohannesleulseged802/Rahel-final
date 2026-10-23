@@ -1,0 +1,8 @@
+{
+  "name": "Paper & Press POS — Stationery & Print Services",
+  "description": "Modern Point of Sale and management system for stationery stores with on-demand printing, binding, laminating services, and comprehensive monthly revenue and sales reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
