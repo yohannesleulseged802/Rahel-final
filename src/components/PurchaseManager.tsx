@@ -52,7 +52,7 @@ export const PurchaseManager: React.FC = () => {
   const lastHandledScanRef = useRef<number>(0);
 
   // Supplier & PO details
-  const [supplierName, setSupplierName] = useState('Rhodia & Clairefontaine Distribution');
+  const [supplierName, setSupplierName] = useState('');
   const [poNumber, setPoNumber] = useState(() => `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
   const [supplierInvoice, setSupplierInvoice] = useState('');
   const [purchaseDate, setPurchaseDate] = useState(() => getLocalDateString());
@@ -200,6 +200,12 @@ export const PurchaseManager: React.FC = () => {
     ));
   };
 
+  const handleUpdateItemCategory = (lineId: string, category: string) => {
+    setPurchaseItems(prev => prev.map(it => 
+      it.id === lineId ? { ...it, category } : it
+    ));
+  };
+
   const handleRemoveLine = (lineId: string) => {
     setPurchaseItems(prev => prev.filter(it => it.id !== lineId));
   };
@@ -220,10 +226,6 @@ export const PurchaseManager: React.FC = () => {
   // Submit Purchase
   const handleSavePurchase = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supplierName.trim()) {
-      showToast('Please specify a supplier or vendor name.');
-      return;
-    }
     if (purchaseItems.length === 0) {
       showToast('Please add at least one line item to this purchase order.');
       return;
@@ -232,9 +234,10 @@ export const PurchaseManager: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      const recordedSupplier = supplierName.trim() || 'General Vendor';
       recordPurchase({
         poNumber,
-        supplierName: supplierName.trim(),
+        supplierName: recordedSupplier,
         supplierInvoice: supplierInvoice.trim() || undefined,
         items: purchaseItems.map(it => ({
           productId: it.productId,
@@ -345,15 +348,17 @@ export const PurchaseManager: React.FC = () => {
             {/* Supplier Information */}
             <div className="space-y-3 mb-5">
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                  Supplier / Vendor Name *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-neutral-300">
+                    Supplier / Vendor Name <span className="text-neutral-500 font-normal">(Optional)</span>
+                  </label>
+                  <span className="text-[10px] text-neutral-500 font-mono">Leave blank for General/Walk-in</span>
+                </div>
                 <div className="relative">
                   <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
                   <input
                     type="text"
-                    required
-                    placeholder="e.g. Rhodia & Clairefontaine Distribution"
+                    placeholder="e.g. Rhodia Distribution (or leave blank for General Vendor)"
                     value={supplierName}
                     onChange={(e) => setSupplierName(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-amber-500/60"
@@ -539,10 +544,19 @@ export const PurchaseManager: React.FC = () => {
                           <div className="text-xs sm:text-sm font-semibold text-neutral-100 truncate">
                             {item.name}
                           </div>
-                          <div className="text-[11px] text-neutral-500 font-mono mt-0.5 flex items-center gap-2">
+                          <div className="text-[11px] text-neutral-500 font-mono mt-1 flex flex-wrap items-center gap-2">
                             <span>SKU: {item.sku}</span>
                             <span>·</span>
-                            <span className="text-amber-400/80">{item.category}</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-neutral-400">Category:</span>
+                              <input
+                                type="text"
+                                value={item.category}
+                                onChange={(e) => handleUpdateItemCategory(item.id, e.target.value)}
+                                placeholder="Category"
+                                className="px-1.5 py-0.5 text-[10px] bg-neutral-900 border border-neutral-800 rounded text-amber-300 font-mono focus:outline-none focus:border-amber-500/60 w-32"
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -683,7 +697,7 @@ export const PurchaseManager: React.FC = () => {
 
                     <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-400">
                       <span className="truncate max-w-[200px] font-medium text-neutral-300">
-                        {po.supplierName}
+                        {po.supplierName || 'General / Walk-in Vendor'}
                       </span>
                       <span className="text-[10px] font-mono text-emerald-400">
                         +{po.itemCount} units
@@ -722,7 +736,7 @@ export const PurchaseManager: React.FC = () => {
             <div className="space-y-3 text-xs mb-5">
               <div className="flex justify-between py-1 border-b border-neutral-800/60">
                 <span className="text-neutral-400">Supplier / Vendor</span>
-                <span className="font-semibold text-neutral-100">{viewingPO.supplierName}</span>
+                <span className="font-semibold text-neutral-100">{viewingPO.supplierName || 'General / Walk-in Vendor'}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-neutral-800/60">
                 <span className="text-neutral-400">Invoice Reference</span>

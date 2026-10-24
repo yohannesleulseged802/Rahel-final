@@ -19,6 +19,7 @@ import { ServiceType } from '../types';
 export const ServicesDesk: React.FC = () => {
   const { recordServiceJob, setActiveTab, showToast } = usePOS();
   const [selectedService, setSelectedService] = useState<ServiceType>('print_copy');
+  const [priceOverride, setPriceOverride] = useState<string>('');
 
   // 1. Printing & Copying State
   const [printColor, setPrintColor] = useState<'bw' | 'color'>('bw');
@@ -213,15 +214,22 @@ export const ServicesDesk: React.FC = () => {
       details += ` · Client Ref: ${customerRef}`;
     }
 
+    const calculatedBase = price;
+    const finalBillablePrice = priceOverride !== '' ? (parseFloat(priceOverride) || 0) : calculatedBase;
+    if (priceOverride !== '') {
+      details += ` · [Custom Rate: ETB ${finalBillablePrice.toFixed(2)}]`;
+    }
+
     recordServiceJob({
       name,
       category: 'Print & Copy Services',
       details,
-      price,
+      price: finalBillablePrice,
       cost,
       customerName: customerRef || (selectedService === 'custom_job' ? customCustomer : undefined),
       notes: selectedService === 'custom_job' ? customNotes : undefined
     });
+    setPriceOverride('');
   };
 
   const handleSaveAndGoToReports = () => {
@@ -254,6 +262,9 @@ export const ServicesDesk: React.FC = () => {
     };
   }
 
+  const calculatedPrice = currentActiveSummary.price;
+  const effectivePrice = priceOverride !== '' ? (parseFloat(priceOverride) || 0) : calculatedPrice;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       
@@ -272,7 +283,7 @@ export const ServicesDesk: React.FC = () => {
           <div className="text-right">
             <span className="text-xs text-neutral-400 block">Job Total</span>
             <span className="text-xl font-bold font-mono-numbers text-amber-300">
-              ETB {currentActiveSummary.price.toFixed(2)}
+              ETB {effectivePrice.toFixed(2)}
             </span>
           </div>
           <button
@@ -306,7 +317,10 @@ export const ServicesDesk: React.FC = () => {
               return (
                 <button
                   key={srv.id}
-                  onClick={() => setSelectedService(srv.id)}
+                  onClick={() => {
+                    setSelectedService(srv.id);
+                    setPriceOverride('');
+                  }}
                   className={`w-full p-3.5 rounded-xl text-left border transition-all flex items-start gap-3 cursor-pointer ${
                     isSelected
                       ? 'border-amber-400/80 bg-neutral-900 text-neutral-100 shadow-md shadow-amber-500/10 ring-1 ring-amber-400/30'
@@ -984,17 +998,41 @@ export const ServicesDesk: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3 shrink-0">
               <div className="text-right">
-                <span className="text-[11px] text-neutral-400 block leading-tight">Total</span>
-                <span className="text-2xl font-bold font-mono-numbers text-amber-300 leading-tight">
-                  ETB {currentActiveSummary.price.toFixed(2)}
-                </span>
+                <div className="flex items-center justify-end gap-1.5 mb-1">
+                  <span className="text-[10px] text-neutral-400 uppercase font-mono font-semibold">
+                    Chargeable Price
+                  </span>
+                  {priceOverride !== '' && (
+                    <button
+                      type="button"
+                      onClick={() => setPriceOverride('')}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-mono underline cursor-pointer"
+                      title="Reset to calculated formula rate"
+                    >
+                      (Reset: ETB {calculatedPrice.toFixed(2)})
+                    </button>
+                  )}
+                </div>
+                <div className="inline-flex items-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-amber-500/50 shadow-inner focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-400/20">
+                  <span className="text-xs font-bold text-amber-400 font-mono">ETB</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder={calculatedPrice.toFixed(2)}
+                    value={priceOverride !== '' ? priceOverride : calculatedPrice.toFixed(2)}
+                    onChange={(e) => setPriceOverride(e.target.value)}
+                    className="w-28 text-right bg-transparent text-xl font-bold font-mono-numbers text-amber-300 focus:outline-none"
+                    title="Click to edit service price as needed"
+                  />
+                </div>
               </div>
               <button
                 type="button"
                 onClick={handleSaveServiceRecord}
-                className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 text-xs sm:text-sm font-bold rounded-xl transition-all shadow-md shadow-amber-500/10 flex items-center gap-2 cursor-pointer"
+                className="min-h-[44px] px-5 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 text-xs sm:text-sm font-bold rounded-xl transition-all shadow-md shadow-amber-500/10 flex items-center gap-2 cursor-pointer active:scale-95 shrink-0"
               >
                 <Check className="w-4 h-4" />
                 <span>Save Service Record</span>

@@ -161,7 +161,7 @@ interface POSContextType {
 
   recordPurchase: (purchaseData: {
     poNumber?: string;
-    supplierName: string;
+    supplierName?: string;
     supplierInvoice?: string;
     items: {
       productId?: string;
@@ -1539,7 +1539,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // 2. Record Purchase: Creates supplier PO record & EDITS INVENTORY AUTOMATICALLY (adds stock & updates cost)
   const recordPurchase = (purchaseData: {
     poNumber?: string;
-    supplierName: string;
+    supplierName?: string;
     supplierInvoice?: string;
     items: {
       productId?: string;
@@ -1587,7 +1587,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newPO: PurchaseTransaction = {
       id: `po-${Date.now()}`,
       poNumber,
-      supplierName: purchaseData.supplierName.trim() || 'General Supplier',
+      supplierName: purchaseData.supplierName?.trim() || 'General Vendor',
       supplierInvoice: purchaseData.supplierInvoice?.trim() || undefined,
       timestamp: purchaseData.timestamp || resolveAccurateTimestamp(purchaseData.date, purchaseData.time),
       operatorId: currentUser.id,

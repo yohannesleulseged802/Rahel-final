@@ -23,7 +23,8 @@ export type ProductCategory =
   | 'Office & Desk'
   | 'Filing & Folders'
   | 'Art & Craft'
-  | 'Print & Copy Services';
+  | 'Print & Copy Services'
+  | (string & {});
 
 export interface Product {
   id: string;
@@ -237,7 +238,7 @@ export interface PurchaseItem {
 export interface PurchaseTransaction {
   id: string;
   poNumber: string;
-  supplierName: string;
+  supplierName?: string;
   supplierInvoice?: string;
   timestamp: string;
   operatorId: string;

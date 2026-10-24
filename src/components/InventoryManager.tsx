@@ -40,14 +40,25 @@ export const InventoryManager: React.FC = () => {
     description: '',
   });
 
-  const categories: (ProductCategory | 'All')[] = [
-    'All',
-    'Notebooks & Paper',
-    'Writing Instruments',
-    'Office & Desk',
-    'Filing & Folders',
-    'Art & Craft',
-  ];
+  const availableCategories = useMemo(() => {
+    const defaults = [
+      'Notebooks & Paper',
+      'Writing Instruments',
+      'Office & Desk',
+      'Filing & Folders',
+      'Art & Craft',
+      'Print & Copy Services'
+    ];
+    const catSet = new Set<string>(defaults);
+    products.forEach(p => {
+      if (p.category && p.category.trim()) {
+        catSet.add(p.category.trim());
+      }
+    });
+    return Array.from(catSet);
+  }, [products]);
+
+  const filterCategories = useMemo(() => ['All', ...availableCategories], [availableCategories]);
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -294,7 +305,7 @@ export const InventoryManager: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
-          {categories.map((cat) => (
+          {filterCategories.map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
@@ -570,18 +581,42 @@ export const InventoryManager: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">
-                    Category
-                  </label>
-                  <select
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-neutral-400">
+                      Category *
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-mono">Manual Entry</span>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    list="category-suggestions"
                     value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-100"
-                  >
-                    {categories.filter(c => c !== 'All').map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    placeholder="Type or pick category..."
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-amber-500/60 font-medium"
+                  />
+                  <datalist id="category-suggestions">
+                    {availableCategories.map((cat) => (
+                      <option key={cat} value={cat} />
                     ))}
-                  </select>
+                  </datalist>
+                  <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-1.5">
+                    {availableCategories.slice(0, 5).map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, category: cat })}
+                        className={`text-[10px] px-2 py-0.5 rounded cursor-pointer whitespace-nowrap transition-colors border ${
+                          formData.category === cat
+                            ? 'bg-amber-950/60 text-amber-300 border-amber-800/60 font-semibold'
+                            : 'bg-neutral-950 text-neutral-500 border-neutral-850 hover:text-neutral-300'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-neutral-400 mb-1">

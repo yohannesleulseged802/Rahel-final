@@ -259,7 +259,7 @@ export const ReportsDashboard: React.FC = () => {
       const rows = purchases.map((po) => [
         po.poNumber,
         new Date(po.timestamp).toLocaleDateString(),
-        po.supplierName,
+        po.supplierName || 'General Vendor',
         po.supplierInvoice || 'N/A',
         po.itemCount,
         `ETB ${po.totalCost.toFixed(2)}`,

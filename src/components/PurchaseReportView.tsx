@@ -113,7 +113,7 @@ export const PurchaseReportView: React.FC = () => {
       if (!dateMatch) return false;
 
       // Supplier
-      if (selectedSupplier !== 'All' && po.supplierName !== selectedSupplier) {
+      if (selectedSupplier !== 'All' && (po.supplierName || 'General Vendor') !== selectedSupplier) {
         return false;
       }
 
@@ -126,7 +126,7 @@ export const PurchaseReportView: React.FC = () => {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchPO = po.poNumber.toLowerCase().includes(q);
-        const matchSupplier = po.supplierName.toLowerCase().includes(q);
+        const matchSupplier = (po.supplierName || 'General Vendor').toLowerCase().includes(q);
         const matchInvoice = !!po.supplierInvoice?.toLowerCase().includes(q);
         const matchItems = po.items.some(it => it.name.toLowerCase().includes(q) || it.sku.toLowerCase().includes(q));
         if (!matchPO && !matchSupplier && !matchInvoice && !matchItems) return false;
@@ -198,7 +198,7 @@ export const PurchaseReportView: React.FC = () => {
     const rows = filteredPurchases.map(po => [
       po.poNumber,
       new Date(po.timestamp).toLocaleDateString(),
-      po.supplierName,
+      po.supplierName || 'General Vendor',
       po.supplierInvoice || 'N/A',
       po.itemCount,
       `ETB ${po.totalCost.toFixed(2)}`,
