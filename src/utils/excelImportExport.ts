@@ -210,28 +210,35 @@ export const exportInventoryToExcel = (products: Product[]) => {
 };
 
 /**
- * Normalizes category names matching valid categories
+ * Normalizes category names matching valid categories or keeps custom user category
  */
 const matchCategory = (rawCat?: string): ProductCategory => {
-  if (!rawCat) return 'Office & Desk';
-  const clean = rawCat.trim().toLowerCase();
+  if (!rawCat || !rawCat.trim()) return 'Office & Desk';
+  const clean = rawCat.trim();
+  const lower = clean.toLowerCase();
 
-  if (clean.includes('note') || clean.includes('paper') || clean.includes('pad') || clean.includes('journal')) {
+  // Match known standard categories
+  const exact = VALID_CATEGORIES.find(c => c.toLowerCase() === lower);
+  if (exact) return exact;
+
+  if (lower.includes('note') || lower.includes('paper') || lower.includes('pad') || lower.includes('journal')) {
     return 'Notebooks & Paper';
   }
-  if (clean.includes('writ') || clean.includes('pen') || clean.includes('pencil') || clean.includes('marker') || clean.includes('ink')) {
+  if (lower.includes('writ') || lower.includes('pen') || lower.includes('pencil') || lower.includes('marker') || lower.includes('ink')) {
     return 'Writing Instruments';
   }
-  if (clean.includes('file') || clean.includes('folder') || clean.includes('binder') || clean.includes('arch')) {
+  if (lower.includes('file') || lower.includes('folder') || lower.includes('binder') || lower.includes('arch')) {
     return 'Filing & Folders';
   }
-  if (clean.includes('art') || clean.includes('craft') || clean.includes('paint') || clean.includes('brush') || clean.includes('color')) {
+  if (lower.includes('art') || lower.includes('craft') || lower.includes('paint') || lower.includes('brush') || lower.includes('color')) {
     return 'Art & Craft';
   }
-  if (clean.includes('print') || clean.includes('copy') || clean.includes('service') || clean.includes('bind')) {
+  if (lower.includes('print') || lower.includes('copy') || lower.includes('service') || lower.includes('bind')) {
     return 'Print & Copy Services';
   }
-  return 'Office & Desk';
+
+  // Preserve custom category as typed!
+  return clean;
 };
 
 /**
@@ -239,6 +246,39 @@ const matchCategory = (rawCat?: string): ProductCategory => {
  */
 const generateRandomBarcode = (): string => {
   return `${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+};
+
+/**
+ * Robust header normalizer: strips asterisks, symbols, brackets, and extra spaces
+ * e.g. "Product Name *" -> "product name"
+ * e.g. "Retail Price * (ETB)" -> "retail price etb"
+ */
+const normalizeHeaderKey = (rawKey: string): string => {
+  return String(rawKey || '')
+    .toLowerCase()
+    .replace(/[*_#:\-()[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+/**
+ * Cleans numeric strings containing currency symbols, commas, or unit suffixes
+ * e.g. "ETB 26.50", "26,50", "15 pcs", "$19.99"
+ */
+const parseCleanNumber = (val: any): number | undefined => {
+  if (val === undefined || val === null || val === '') return undefined;
+  if (typeof val === 'number') return isNaN(val) ? undefined : val;
+  const str = String(val).trim();
+  let cleaned = str.replace(/[^0-9.,-]/g, '').trim();
+  if (!cleaned) return undefined;
+  // If comma is used as decimal separator (e.g. "26,50" with no dots)
+  if (cleaned.includes(',') && !cleaned.includes('.')) {
+    cleaned = cleaned.replace(',', '.');
+  } else {
+    cleaned = cleaned.replace(/,/g, '');
+  }
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? undefined : parsed;
 };
 
 /**
@@ -259,46 +299,135 @@ export const parseUploadedItemSpreadsheet = async (
         }
 
         const workbook = XLSX.read(data, { type: 'binary' });
-        // Use the first sheet or the sheet named 'Item_Catalog_Template' if present
-        let sheetName = workbook.SheetNames[0];
+        
+        // 1. Pick the best sheet containing catalog data
+        let targetSheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes('Item_Catalog_Template')) {
-          sheetName = 'Item_Catalog_Template';
+          targetSheetName = 'Item_Catalog_Template';
+        } else {
+          // Find sheet with the largest data range or non-instruction sheet
+          let maxRows = 0;
+          for (const name of workbook.SheetNames) {
+            const ws = workbook.Sheets[name];
+            const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
+            const rowCount = range.e.r - range.s.r + 1;
+            const isInstruction = name.toLowerCase().includes('instruction') || name.toLowerCase().includes('guide');
+            if (rowCount > maxRows && (!isInstruction || workbook.SheetNames.length === 1)) {
+              maxRows = rowCount;
+              targetSheetName = name;
+            }
+          }
         }
 
-        const worksheet = workbook.Sheets[sheetName];
-        const rawJson: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+        const worksheet = workbook.Sheets[targetSheetName];
+        if (!worksheet) {
+          throw new Error('Selected worksheet could not be read.');
+        }
 
-        if (!rawJson || rawJson.length === 0) {
+        // 2. Read raw 2D array of rows to accurately detect header row
+        const raw2D: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+        if (!raw2D || raw2D.length === 0) {
           throw new Error('No data rows found in the uploaded spreadsheet.');
+        }
+
+        // Header keywords to identify the header row
+        const keyIndicatorWords = ['name', 'product', 'item', 'sku', 'code', 'barcode', 'category', 'price', 'cost', 'stock', 'qty', 'unit'];
+
+        let headerRowIndex = 0;
+        let bestMatchScore = 0;
+
+        // Scan first 10 rows for the row that has the most matching column names
+        const scanDepth = Math.min(10, raw2D.length);
+        for (let r = 0; r < scanDepth; r++) {
+          const rowCells = raw2D[r];
+          if (!Array.isArray(rowCells)) continue;
+          let score = 0;
+          for (const cell of rowCells) {
+            const cellNorm = normalizeHeaderKey(String(cell));
+            if (cellNorm && keyIndicatorWords.some(kw => cellNorm.includes(kw))) {
+              score++;
+            }
+          }
+          if (score > bestMatchScore) {
+            bestMatchScore = score;
+            headerRowIndex = r;
+          }
+        }
+
+        const headerRow = raw2D[headerRowIndex] || [];
+        const headers: string[] = headerRow.map((c: any) => String(c).trim());
+
+        // Extract data rows below header row
+        const dataRows2D = raw2D.slice(headerRowIndex + 1);
+        if (dataRows2D.length === 0) {
+          throw new Error('No product data rows found below the header row.');
         }
 
         const existingSkus = new Set(existingProducts.map(p => p.sku.trim().toLowerCase()));
         const existingBarcodes = new Set(existingProducts.filter(p => p.barcode).map(p => p.barcode.trim()));
 
-        const parsedItems: ParsedImportItem[] = rawJson.map((row, index) => {
-          const rowNum = index + 2; // Row 1 is header
-          const issues: string[] = [];
+        const parsedItems: ParsedImportItem[] = [];
 
-          // Case-insensitive key finder helper
-          const findVal = (keys: string[]): any => {
-            const foundKey = Object.keys(row).find(k => 
-              keys.some(cand => k.toLowerCase().trim().replace(/[*_]/g, '') === cand.toLowerCase())
-            );
-            return foundKey !== undefined ? row[foundKey] : undefined;
+        dataRows2D.forEach((rowArray, idx) => {
+          if (!Array.isArray(rowArray)) return;
+
+          // Build row object mapping header -> cell value
+          const rowObj: Record<string, any> = {};
+          headers.forEach((h, colIdx) => {
+            if (h) {
+              rowObj[h] = rowArray[colIdx] !== undefined ? rowArray[colIdx] : '';
+            }
+          });
+
+          // Helper to find value from row object matching candidate names
+          const findVal = (candidates: string[]): any => {
+            const normCands = candidates.map(c => normalizeHeaderKey(c));
+            const entries = Object.entries(rowObj);
+
+            // 1. Exact match on normalized header
+            for (const [k, v] of entries) {
+              const normK = normalizeHeaderKey(k);
+              if (normCands.includes(normK)) {
+                if (v !== undefined && v !== null && String(v).trim() !== '') {
+                  return v;
+                }
+              }
+            }
+
+            // 2. StartsWith or includes match
+            for (const [k, v] of entries) {
+              const normK = normalizeHeaderKey(k);
+              for (const cand of normCands) {
+                if (normK === cand || normK.startsWith(cand + ' ') || normK.includes(cand)) {
+                  if (v !== undefined && v !== null && String(v).trim() !== '') {
+                    return v;
+                  }
+                }
+              }
+            }
+            return undefined;
           };
 
-          const rawName = String(findVal(['product name', 'name', 'item name', 'product', 'title']) || '').trim();
-          let rawSku = String(findVal(['sku', 'code', 'item code', 'item no', 'sku code']) || '').trim();
-          let rawBarcode = String(findVal(['barcode', 'upc', 'ean', 'gtin', 'bar code']) || '').trim();
-          const rawCategory = String(findVal(['category', 'dept', 'department', 'group']) || '').trim();
-          const rawPrice = findVal(['retail price', 'price', 'sell price', 'unit price', 'selling price', 'rate']);
-          const rawCost = findVal(['cost price', 'cost', 'buy price', 'purchase price', 'unit cost']);
-          const rawStock = findVal(['opening stock', 'stock', 'current stock', 'quantity', 'qty', 'count']);
-          const rawMinStock = findVal(['min stock alert', 'min stock', 'alert', 'reorder level', 'threshold']);
-          const rawUnit = String(findVal(['unit', 'uom', 'measure']) || 'each').trim();
-          const rawDesc = String(findVal(['description', 'desc', 'notes', 'specifications', 'specs']) || '').trim();
+          const rawName = String(findVal(['product name', 'item name', 'name', 'product', 'item', 'title', 'description', 'particulars']) || '').trim();
+          let rawSku = String(findVal(['sku', 'item code', 'product code', 'code', 'item no', 'sku code', 'id', 'item id']) || '').trim();
+          let rawBarcode = String(findVal(['barcode', 'upc', 'ean', 'gtin', 'bar code', 'serial']) || '').trim();
+          const rawCategory = String(findVal(['category', 'dept', 'department', 'group', 'type', 'section']) || '').trim();
+          const rawPrice = findVal(['retail price', 'price', 'sell price', 'selling price', 'unit price', 'sales price', 'rate', 'retail', 'etb', 'amount']);
+          const rawCost = findVal(['cost price', 'cost', 'buy price', 'purchase price', 'wholesale price', 'unit cost', 'purchase cost']);
+          const rawStock = findVal(['opening stock', 'current stock', 'stock', 'quantity', 'qty', 'units', 'count', 'balance', 'on hand', 'inventory']);
+          const rawMinStock = findVal(['min stock alert', 'min stock', 'alert', 'reorder level', 'reorder threshold', 'threshold', 'min alert']);
+          const rawUnit = String(findVal(['unit', 'unit type', 'uom', 'measure', 'packaging', 'pack']) || 'each').trim();
+          const rawDesc = String(findVal(['description', 'desc', 'notes', 'specifications', 'specs', 'details']) || '').trim();
 
-          // Validation
+          // Skip completely empty rows
+          const isEmptyRow = !rawName && !rawSku && !rawBarcode && rawPrice === undefined && rawStock === undefined;
+          if (isEmptyRow) {
+            return;
+          }
+
+          const rowNum = headerRowIndex + 2 + idx; // 1-based row in Excel
+          const issues: string[] = [];
+
           let isValid = true;
           let status: 'valid' | 'warning' | 'error' = 'valid';
 
@@ -335,38 +464,38 @@ export const parseUploadedItemSpreadsheet = async (
           }
 
           // Price handling
-          let priceNum = typeof rawPrice === 'number' ? rawPrice : parseFloat(String(rawPrice).replace(/[^0-9.]/g, ''));
-          if (isNaN(priceNum) || priceNum < 0) {
+          let priceNum = parseCleanNumber(rawPrice);
+          if (priceNum === undefined || priceNum < 0) {
             priceNum = 9.99;
             issues.push('Invalid price; defaulted to ETB 9.99');
             if (status !== 'error') status = 'warning';
           }
 
           // Cost handling
-          let costNum = typeof rawCost === 'number' ? rawCost : parseFloat(String(rawCost).replace(/[^0-9.]/g, ''));
-          if (isNaN(costNum) || costNum < 0) {
+          let costNum = parseCleanNumber(rawCost);
+          if (costNum === undefined || costNum < 0) {
             costNum = Number((priceNum * 0.5).toFixed(2));
             issues.push('Cost defaulted to 50% of retail price');
             if (status !== 'error') status = 'warning';
           }
 
           // Stock handling
-          let stockNum = typeof rawStock === 'number' ? rawStock : parseInt(String(rawStock).replace(/[^0-9-]/g, ''), 10);
-          if (isNaN(stockNum)) {
+          let stockNum = parseCleanNumber(rawStock);
+          if (stockNum === undefined) {
             stockNum = 15;
             issues.push('Stock defaulted to 15 units');
             if (status !== 'error') status = 'warning';
           }
 
           // Min alert
-          let minAlertNum = typeof rawMinStock === 'number' ? rawMinStock : parseInt(String(rawMinStock).replace(/[^0-9-]/g, ''), 10);
-          if (isNaN(minAlertNum) || minAlertNum < 0) {
+          let minAlertNum = parseCleanNumber(rawMinStock);
+          if (minAlertNum === undefined || minAlertNum < 0) {
             minAlertNum = 5;
           }
 
           const resolvedCategory = matchCategory(rawCategory);
 
-          return {
+          parsedItems.push({
             rowNumber: rowNum,
             name: rawName || 'Unnamed Item',
             sku: rawSku,
@@ -374,8 +503,8 @@ export const parseUploadedItemSpreadsheet = async (
             category: resolvedCategory,
             price: Number(priceNum.toFixed(2)),
             costPrice: Number(costNum.toFixed(2)),
-            stock: stockNum,
-            minStockAlert: minAlertNum,
+            stock: Math.round(stockNum),
+            minStockAlert: Math.round(minAlertNum),
             unit: rawUnit || 'each',
             description: rawDesc,
             isValid,
@@ -383,7 +512,7 @@ export const parseUploadedItemSpreadsheet = async (
             issues,
             isExistingMatch,
             matchedProductId: matchedProd?.id,
-          };
+          });
         });
 
         resolve(parsedItems);
