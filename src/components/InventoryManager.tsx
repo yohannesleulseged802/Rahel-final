@@ -9,7 +9,11 @@ import {
   FileSpreadsheet,
   Download,
   Sparkles,
-  Barcode
+  Barcode,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Layers
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { Product, ProductCategory } from '../types';
@@ -60,19 +64,60 @@ export const InventoryManager: React.FC = () => {
 
   const filterCategories = useMemo(() => ['All', ...availableCategories], [availableCategories]);
 
+  const [sortBy, setSortBy] = useState<'category' | 'name' | 'stock' | 'price'>('category');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const handleToggleSort = (field: 'category' | 'name' | 'stock' | 'price') => {
+    if (sortBy === field) {
+      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
+    const list = products.filter((p) => {
       const matchesSearch = 
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.barcode.includes(searchQuery);
+        p.barcode.includes(searchQuery) ||
+        (p.category && p.category.toLowerCase().includes(searchQuery.toLowerCase()));
 
       const matchesCat = selectedCategory === 'All' || p.category === selectedCategory;
       const matchesLowStock = onlyLowStock ? p.stock <= p.minStockAlert : true;
 
       return matchesSearch && matchesCat && matchesLowStock;
     });
-  }, [products, searchQuery, selectedCategory, onlyLowStock]);
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'category') {
+        const catA = (a.category || '').trim();
+        const catB = (b.category || '').trim();
+        const catCompare = catA.localeCompare(catB, undefined, { sensitivity: 'base' });
+        if (catCompare !== 0) {
+          return sortOrder === 'asc' ? catCompare : -catCompare;
+        }
+        // Sub-sort by item title A-Z
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      }
+
+      if (sortBy === 'name') {
+        const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        return sortOrder === 'asc' ? nameCompare : -nameCompare;
+      }
+
+      if (sortBy === 'stock') {
+        return sortOrder === 'asc' ? a.stock - b.stock : b.stock - a.stock;
+      }
+
+      if (sortBy === 'price') {
+        return sortOrder === 'asc' ? a.price - b.price : b.price - a.price;
+      }
+
+      return 0;
+    });
+  }, [products, searchQuery, selectedCategory, onlyLowStock, sortBy, sortOrder]);
 
   const totalStockItems = products.reduce((sum, p) => sum + p.stock, 0);
   const totalRetailValuation = products.reduce((sum, p) => sum + p.price * p.stock, 0);
@@ -321,6 +366,65 @@ export const InventoryManager: React.FC = () => {
         </div>
       </div>
 
+      {/* Active Sort Bar & View Summary */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 px-1 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-neutral-400 font-medium">Sort by:</span>
+          <div className="inline-flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-xl p-1">
+            <button
+              type="button"
+              onClick={() => handleToggleSort('category')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                sortBy === 'category'
+                  ? 'bg-amber-400 text-neutral-950 shadow-xs'
+                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800'
+              }`}
+              title="Click to toggle Category A-Z / Z-A"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Category {sortBy === 'category' ? (sortOrder === 'asc' ? 'A→Z' : 'Z→A') : ''}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleSort('name')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                sortBy === 'name'
+                  ? 'bg-amber-400 text-neutral-950 font-bold shadow-xs'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+              }`}
+            >
+              <span>Name {sortBy === 'name' ? (sortOrder === 'asc' ? 'A→Z' : 'Z→A') : ''}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleSort('stock')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                sortBy === 'stock'
+                  ? 'bg-amber-400 text-neutral-950 font-bold shadow-xs'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+              }`}
+            >
+              <span>Stock {sortBy === 'stock' ? (sortOrder === 'asc' ? 'Low' : 'High') : ''}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleSort('price')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                sortBy === 'price'
+                  ? 'bg-amber-400 text-neutral-950 font-bold shadow-xs'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+              }`}
+            >
+              <span>Price {sortBy === 'price' ? (sortOrder === 'asc' ? 'Low' : 'High') : ''}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="text-[11px] font-mono text-neutral-400">
+          Showing <span className="text-amber-400 font-bold">{filteredProducts.length}</span> of {products.length} products
+        </div>
+      </div>
+
       {/* Inventory Table & Mobile Cards in Obsidian & Gold */}
       <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-xl shadow-black/40">
         {/* Desktop View: Full Data Table */}
@@ -328,13 +432,57 @@ export const InventoryManager: React.FC = () => {
           <table className="w-full text-left text-xs">
             <thead className="bg-neutral-950/80 border-b border-neutral-800 text-neutral-400 font-semibold uppercase tracking-wider text-[11px]">
               <tr>
-                <th className="py-3.5 px-4">Item &amp; Description</th>
-                <th className="py-3.5 px-3">Category</th>
+                <th
+                  onClick={() => handleToggleSort('name')}
+                  className="py-3.5 px-4 cursor-pointer hover:text-amber-300 transition-colors select-none"
+                  title="Sort by item name"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Item &amp; Description</span>
+                    {sortBy === 'name' ? (
+                      sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                    ) : <ArrowUpDown className="w-3 h-3 text-neutral-600" />}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleToggleSort('category')}
+                  className="py-3.5 px-3 cursor-pointer hover:text-amber-300 transition-colors select-none"
+                  title="Sort by category"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className={sortBy === 'category' ? 'text-amber-300 font-bold' : ''}>Category</span>
+                    {sortBy === 'category' ? (
+                      sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                    ) : <ArrowUpDown className="w-3 h-3 text-neutral-600" />}
+                  </div>
+                </th>
                 <th className="py-3.5 px-3">SKU / Barcode</th>
-                <th className="py-3.5 px-3 text-right">Retail</th>
+                <th
+                  onClick={() => handleToggleSort('price')}
+                  className="py-3.5 px-3 text-right cursor-pointer hover:text-amber-300 transition-colors select-none"
+                  title="Sort by retail price"
+                >
+                  <div className="flex items-center justify-end gap-1.5">
+                    <span>Retail</span>
+                    {sortBy === 'price' ? (
+                      sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                    ) : <ArrowUpDown className="w-3 h-3 text-neutral-600" />}
+                  </div>
+                </th>
                 <th className="py-3.5 px-3 text-right">Cost</th>
                 <th className="py-3.5 px-3 text-right">Margin %</th>
-                <th className="py-3.5 px-3 text-center">Stock</th>
+                <th
+                  onClick={() => handleToggleSort('stock')}
+                  className="py-3.5 px-3 text-center cursor-pointer hover:text-amber-300 transition-colors select-none"
+                  title="Sort by stock quantity"
+                >
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span>Stock</span>
+                    {sortBy === 'stock' ? (
+                      sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                    ) : <ArrowUpDown className="w-3 h-3 text-neutral-600" />}
+                  </div>
+                </th>
                 <th className="py-3.5 px-4 text-right">Adjust</th>
                 <th className="py-3.5 px-3 text-right">Actions</th>
               </tr>
