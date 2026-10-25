@@ -26,6 +26,7 @@ import {
   collection, 
   onSnapshot, 
   doc, 
+  getDoc,
   setDoc, 
   deleteDoc, 
   writeBatch, 
@@ -680,64 +681,154 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auth operations: Authenticates using salted PBKDF2 hash (never plaintext!)
   const login = async (pinAttempt: string, userToLogin?: User, rememberDevice: boolean = false): Promise<boolean> => {
-    let targetUser = userToLogin;
+    const cleanPin = String(pinAttempt ?? '').trim();
+    if (!/^\d{4}$/.test(cleanPin)) {
+      showToast('PIN must be exactly 4 numeric digits.');
+      return false;
+    }
 
-    // If no target user provided, find user whose PIN hash matches
-    if (!targetUser) {
-      for (const u of users) {
-        let isMatch = false;
-        if (u.pinSalt && u.pinHash) {
-          isMatch = await verifyPin(pinAttempt, u.pinSalt, u.pinHash);
-        } else if (u.pin && u.pin === pinAttempt) {
-          isMatch = true;
+    // Helper to test a user candidate's PIN credentials
+    const testCandidatePin = async (candidate: User): Promise<boolean> => {
+      try {
+        if (candidate.pinSalt && candidate.pinHash) {
+          return await verifyPin(cleanPin, candidate.pinSalt, candidate.pinHash);
         }
-        if (isMatch) {
-          targetUser = u;
+        if (candidate.pin && String(candidate.pin).trim() === cleanPin) {
+          return true;
+        }
+      } catch (err) {
+        console.warn('Error testing candidate PIN:', err);
+      }
+      return false;
+    };
+
+    // 1. Gather all known user records (combining in-memory state and localStorage)
+    let candidateUsers = [...users];
+    if (candidateUsers.length === 0) {
+      try {
+        const saved = localStorage.getItem(`${STORAGE_PREFIX}users`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            candidateUsers = parsed;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // If candidateUsers is still empty, fetch directly from Firestore users collection
+    if (candidateUsers.length === 0) {
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        if (!snap.empty) {
+          const remoteUsers = snap.docs.map(d => d.data() as User);
+          candidateUsers = remoteUsers;
+          setUsers(remoteUsers);
+          localStorage.setItem(`${STORAGE_PREFIX}users`, JSON.stringify(remoteUsers));
+        }
+      } catch (err) {
+        console.warn('Error fetching users from Firestore in login():', err);
+      }
+    }
+
+    let authenticatedUser: User | null = null;
+
+    // 2. If a specific user was targeted (e.g., from quick unlock, selected user pill, or login modal):
+    if (userToLogin) {
+      // Find full user record that contains pinSalt/pinHash from candidate pool
+      let fullTargetUser: User | undefined = candidateUsers.find(
+        u => u.id === userToLogin.id || (u.email && userToLogin.email && u.email.toLowerCase() === userToLogin.email.toLowerCase())
+      );
+
+      // If targeted user lacks credentials in local memory, fetch fresh doc from Firestore
+      if (!fullTargetUser?.pinHash && !fullTargetUser?.pin) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', userToLogin.id));
+          if (userDoc.exists()) {
+            fullTargetUser = userDoc.data() as User;
+          }
+        } catch (err) {
+          console.warn('Error fetching targeted user doc from Firestore:', err);
+        }
+      }
+
+      // If userToLogin itself already carried credentials:
+      if (!fullTargetUser && (userToLogin.pinHash || userToLogin.pin)) {
+        fullTargetUser = userToLogin;
+      }
+
+      if (fullTargetUser) {
+        const matches = await testCandidatePin(fullTargetUser);
+        if (matches) {
+          authenticatedUser = fullTargetUser;
+        }
+      }
+    }
+
+    // 3. If no targeted match yet (or cashier entered their PIN while another user was selected or register was locked):
+    if (!authenticatedUser) {
+      for (const candidate of candidateUsers) {
+        const matches = await testCandidatePin(candidate);
+        if (matches) {
+          authenticatedUser = candidate;
           break;
         }
       }
     }
 
-    if (!targetUser) {
-      showToast('Invalid PIN. Please try again.');
+    // 4. Fallback search against Firestore if candidateUsers didn't produce a match
+    if (!authenticatedUser && candidateUsers.length <= 1) {
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        for (const docSnap of snap.docs) {
+          const remoteUser = docSnap.data() as User;
+          const matches = await testCandidatePin(remoteUser);
+          if (matches) {
+            authenticatedUser = remoteUser;
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn('Error in Firestore fallback search:', err);
+      }
+    }
+
+    // If still no match found, notify failure
+    if (!authenticatedUser) {
+      if (userToLogin?.name) {
+        showToast('Incorrect PIN for ' + userToLogin.name);
+      } else {
+        showToast('Incorrect 4-digit PIN. Please try again.');
+      }
       return false;
     }
 
-    let isPinValid = false;
-    if (targetUser.pinSalt && targetUser.pinHash) {
-      isPinValid = await verifyPin(pinAttempt, targetUser.pinSalt, targetUser.pinHash);
-    } else if (targetUser.pin && targetUser.pin === pinAttempt) {
-      isPinValid = true;
-      // Auto-migrate legacy plain PIN to salted PBKDF2 hash
+    // 5. Auto-migrate legacy plain PIN to salted PBKDF2 hash in Firestore
+    if (!authenticatedUser.pinHash && authenticatedUser.pin) {
       try {
         const salt = generateSalt();
-        const hash = await hashPin(pinAttempt, salt);
-        await updateDoc(doc(db, 'users', targetUser.id), {
+        const hash = await hashPin(cleanPin, salt);
+        await updateDoc(doc(db, 'users', authenticatedUser.id), {
           pinHash: hash,
           pinSalt: salt,
           pin: deleteField()
         });
-        targetUser.pinHash = hash;
-        targetUser.pinSalt = salt;
-        delete targetUser.pin;
+        authenticatedUser.pinHash = hash;
+        authenticatedUser.pinSalt = salt;
+        delete authenticatedUser.pin;
       } catch (err) {
         console.warn('Could not migrate legacy PIN in Firestore:', err);
       }
     }
 
-    if (!isPinValid) {
-      showToast('Incorrect PIN for ' + targetUser.name);
-      return false;
-    }
-
-    // Never store passwords or credentials in the session object
+    // 6. Never store passwords or credentials in the session object
     const safeUser: User = {
-      id: targetUser.id,
-      name: targetUser.name,
-      email: targetUser.email,
-      role: targetUser.role,
-      avatarColor: targetUser.avatarColor,
-      createdAt: targetUser.createdAt
+      id: authenticatedUser.id,
+      name: authenticatedUser.name,
+      email: authenticatedUser.email,
+      role: authenticatedUser.role,
+      avatarColor: authenticatedUser.avatarColor,
+      createdAt: authenticatedUser.createdAt
     };
 
     setCurrentUser(safeUser);
@@ -1108,8 +1199,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateUserPin = async (newPin: string, targetUserId?: string): Promise<boolean> => {
-    if (!newPin || newPin.length !== 4) {
-      showToast('PIN must be exactly 4 digits.');
+    const cleanPin = String(newPin ?? '').trim();
+    if (!/^\d{4}$/.test(cleanPin)) {
+      showToast('PIN must be exactly 4 numeric digits.');
       return false;
     }
     const idToUpdate = targetUserId || currentUser?.id || users[0]?.id;
@@ -1117,7 +1209,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const salt = generateSalt();
-      const hash = await hashPin(newPin, salt);
+      const hash = await hashPin(cleanPin, salt);
       await updateDoc(doc(db, 'users', idToUpdate), {
         pinHash: hash,
         pinSalt: salt,

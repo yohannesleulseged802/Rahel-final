@@ -16,7 +16,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 
   useEffect(() => {
     if (currentUser) {
-      setSelectedUser(currentUser);
+      const full = users.find(u => u.id === currentUser.id);
+      setSelectedUser(full || currentUser);
     } else if (users.length > 0) {
       setSelectedUser(prev => (prev && users.some(u => u.id === prev.id)) ? prev : users[0]);
     } else {

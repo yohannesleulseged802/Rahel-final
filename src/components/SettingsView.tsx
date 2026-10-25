@@ -156,11 +156,12 @@ export const SettingsView: React.FC = () => {
   // Change Operator PIN
   const handleUpdatePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!/^\d{4,6}$/.test(newPin)) {
-      setPinMessage('PIN must be 4 to 6 numeric digits.');
+    const clean = newPin.trim();
+    if (!/^\d{4}$/.test(clean)) {
+      setPinMessage('PIN must be exactly 4 numeric digits.');
       return;
     }
-    const success = await updateUserPin(newPin);
+    const success = await updateUserPin(clean);
     if (success) {
       setPinMessage('Operator PIN updated successfully.');
       setNewPin('');

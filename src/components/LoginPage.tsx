@@ -115,6 +115,11 @@ export const LoginPage: React.FC = () => {
     if (users.length > 0) {
       if (!selectedUser || !users.some(u => u.id === selectedUser.id)) {
         setSelectedUser(users[0]);
+      } else {
+        const full = users.find(u => u.id === selectedUser.id);
+        if (full && (!selectedUser.pinHash || !selectedUser.pinSalt)) {
+          setSelectedUser(full);
+        }
       }
     } else {
       setSelectedUser(null);
@@ -201,17 +206,21 @@ export const LoginPage: React.FC = () => {
   // Verify PIN submission
   const verifyPin = async (pinToTest: string) => {
     if (isLockedOut) return;
+    const clean = String(pinToTest ?? '').trim();
+    if (!/^\d{4}$/.test(clean)) return;
+
     const target = selectedUser || (users.length === 1 ? users[0] : undefined);
-    if (!target) {
-      setErrorMessage('Please select your operator profile or sign in using Email & Password.');
-      return;
-    }
-    const success = await login(pinToTest, target, rememberDevice);
+    const success = await login(clean, target, rememberDevice);
     if (!success) {
       setPinErrorShake(true);
       setTimeout(() => setPinErrorShake(false), 500);
       setPin('');
       recordFailedAttempt();
+      if (users.length === 0) {
+        setErrorMessage('No registered operator account found. Please sign up or sign in with Email & Password.');
+      } else {
+        setErrorMessage('Incorrect 4-digit PIN. Please try again or switch to Email & Password.');
+      }
     } else {
       setPin('');
       setFailedAttempts(0);
@@ -361,7 +370,8 @@ export const LoginPage: React.FC = () => {
     e.preventDefault();
     setChangePinError(null);
 
-    if (!/^\d{4}$/.test(newPinInput)) {
+    const clean = newPinInput.trim();
+    if (!/^\d{4}$/.test(clean)) {
       setChangePinError('PIN must be exactly 4 numeric digits (e.g. 2026).');
       return;
     }
@@ -371,9 +381,14 @@ export const LoginPage: React.FC = () => {
       setChangePinError('No user account selected.');
       return;
     }
-    await updateUserPin(newPinInput, targetUserId);
-    setIsChangePinOpen(false);
-    setNewPinInput('');
+    const success = await updateUserPin(clean, targetUserId);
+    if (success) {
+      setIsChangePinOpen(false);
+      setNewPinInput('');
+      setErrorMessage(null);
+    } else {
+      setChangePinError('Failed to update PIN in database. Please check connection.');
+    }
   };
 
   return (
