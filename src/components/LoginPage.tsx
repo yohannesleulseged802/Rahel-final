@@ -1094,7 +1094,11 @@ export const LoginPage: React.FC = () => {
                       </button>
                     </div>
                     <p className="text-[11px] text-neutral-400 mt-1.5">
-                      Authorized by the store administrator to protect register integrity.
+                      {users.length === 0 ? (
+                        <>Initial store setup passcode: <strong className="text-amber-300 font-mono">RahelF1234</strong> (can be updated in Settings).</>
+                      ) : (
+                        'Authorized by the store administrator to protect register integrity.'
+                      )}
                     </p>
                   </div>
 

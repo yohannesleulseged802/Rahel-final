@@ -93,6 +93,7 @@ export const SalesReportView: React.FC = () => {
   // Filter Transactions by Date or Date Range
   const filteredSales = useMemo(() => {
     return transactions.filter((tx) => {
+      if (!tx || !tx.timestamp) return false;
       const txDate = tx.timestamp.slice(0, 10);
 
       // Date matching
@@ -107,7 +108,7 @@ export const SalesReportView: React.FC = () => {
       if (!dateMatch) return false;
 
       // Payment Method
-      if (selectedPaymentMethod !== 'All' && tx.payment.method !== selectedPaymentMethod) {
+      if (selectedPaymentMethod !== 'All' && tx.payment?.method !== selectedPaymentMethod) {
         return false;
       }
 
@@ -122,9 +123,9 @@ export const SalesReportView: React.FC = () => {
       // Search matching (receipt #, customer name, items)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchReceipt = tx.receiptNumber.toLowerCase().includes(q);
+        const matchReceipt = (tx.receiptNumber || '').toLowerCase().includes(q);
         const matchCustomer = !!tx.customerName?.toLowerCase().includes(q);
-        const matchItems = tx.items.some(it => it.name.toLowerCase().includes(q));
+        const matchItems = Array.isArray(tx.items) && tx.items.some(it => (it.name || '').toLowerCase().includes(q));
         if (!matchReceipt && !matchCustomer && !matchItems) return false;
       }
 
@@ -719,7 +720,7 @@ export const SalesReportView: React.FC = () => {
                   </div>
                 )}
                 <div className="flex justify-between text-neutral-400">
-                  <span>Tax ({((inspectSale.taxRate || settings.taxRate) * 100).toFixed(2)}%):</span>
+                  <span>Tax ({(((inspectSale.taxRate !== undefined ? inspectSale.taxRate : (settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0))) * 100).toFixed(1)}%):</span>
                   <span>ETB {inspectSale.taxTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-base font-bold text-amber-300 pt-1.5 border-t border-neutral-800">

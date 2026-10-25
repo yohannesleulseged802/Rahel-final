@@ -292,7 +292,9 @@ export function generateSaleReceiptPDF(tx: SaleTransaction, settings: StoreSetti
   }
 
   // Tax
-  doc.text(`VAT (${((tx.taxRate || settings.taxRate || 0.15) * 100).toFixed(0)}%):`, 4, curY);
+  const effectiveTax = tx.taxRate !== undefined ? tx.taxRate : (settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0);
+  const taxLabel = effectiveTax > 0 ? `VAT (${(effectiveTax * 100).toFixed(0)}%):` : 'VAT (Exempt):';
+  doc.text(taxLabel, 4, curY);
   doc.text(`ETB ${tx.taxTotal.toFixed(2)}`, pageWidth - 4, curY, { align: 'right' });
   curY += 4.5;
 

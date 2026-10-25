@@ -17,7 +17,7 @@ import { usePOS } from '../context/POSContext';
 import { ServiceType } from '../types';
 
 export const ServicesDesk: React.FC = () => {
-  const { recordServiceJob, setActiveTab, showToast } = usePOS();
+  const { recordServiceJob, setActiveTab, showToast, settings } = usePOS();
   const [selectedService, setSelectedService] = useState<ServiceType>('print_copy');
   const [priceOverride, setPriceOverride] = useState<string>('');
 
@@ -214,8 +214,8 @@ export const ServicesDesk: React.FC = () => {
       details += ` · Client Ref: ${customerRef}`;
     }
 
-    const calculatedBase = price;
-    const finalBillablePrice = priceOverride !== '' ? (parseFloat(priceOverride) || 0) : calculatedBase;
+    const calculatedBase = Math.max(0, price);
+    const finalBillablePrice = priceOverride !== '' ? Math.max(0, parseFloat(priceOverride) || 0) : calculatedBase;
     if (priceOverride !== '') {
       details += ` · [Custom Rate: ETB ${finalBillablePrice.toFixed(2)}]`;
     }
@@ -993,7 +993,7 @@ export const ServicesDesk: React.FC = () => {
                   {currentActiveSummary.desc || 'Configured Service Job'}
                 </div>
                 <div className="text-[11px] text-neutral-400 mt-0.5">
-                  Taxable at store standard 8.25% · On-demand counter delivery
+                  {settings.taxEnabled !== false ? `Taxable at store standard ${((settings.taxRate ?? 0.15) * 100).toFixed(1)}% VAT` : 'Tax Exempt'} · On-demand counter delivery
                 </div>
               </div>
             </div>

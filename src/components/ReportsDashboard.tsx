@@ -24,8 +24,20 @@ export const ReportsDashboard: React.FC = () => {
   const [activeReportTab, setActiveReportTab] = useState<
     'sales_report' | 'purchase_report' | 'po_report' | 'monthly' | 'services' | 'cashiers' | 'products' | 'tax'
   >('sales_report');
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [drilldownMonth, setDrilldownMonth] = useState<number | null>(null);
+
+  const availableYears = useMemo(() => {
+    const currentYr = new Date().getFullYear();
+    const set = new Set<number>([currentYr, currentYr - 1]);
+    transactions.forEach(tx => {
+      if (tx?.timestamp) {
+        const yr = new Date(tx.timestamp).getFullYear();
+        if (!isNaN(yr)) set.add(yr);
+      }
+    });
+    return Array.from(set).sort((a, b) => b - a);
+  }, [transactions]);
 
   const months = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -35,8 +47,9 @@ export const ReportsDashboard: React.FC = () => {
   const monthlyData = useMemo(() => {
     const data = months.map((monthName, idx) => {
       const monthTxs = transactions.filter((tx) => {
+        if (!tx || !tx.timestamp) return false;
         const d = new Date(tx.timestamp);
-        return d.getFullYear() === selectedYear && d.getMonth() === idx;
+        return !isNaN(d.getTime()) && d.getFullYear() === selectedYear && d.getMonth() === idx;
       });
 
       let totalRevenue = 0;
@@ -47,19 +60,21 @@ export const ReportsDashboard: React.FC = () => {
       let totalTax = 0;
 
       monthTxs.forEach((tx) => {
-        totalRevenue += tx.total;
-        totalDiscount += tx.discountTotal;
-        totalTax += tx.taxTotal;
-        totalCost += tx.costTotal;
+        totalRevenue += Number(tx.total) || 0;
+        totalDiscount += Number(tx.discountTotal) || 0;
+        totalTax += Number(tx.taxTotal) || 0;
+        totalCost += Number(tx.costTotal) || 0;
 
-        tx.items.forEach((it) => {
-          const line = it.unitPrice * it.quantity;
-          if (it.type === 'service') {
-            serviceRevenue += line;
-          } else {
-            productRevenue += line;
-          }
-        });
+        if (Array.isArray(tx.items)) {
+          tx.items.forEach((it) => {
+            const line = (Number(it.unitPrice) || 0) * (Number(it.quantity) || 0);
+            if (it.type === 'service') {
+              serviceRevenue += line;
+            } else {
+              productRevenue += line;
+            }
+          });
+        }
       });
 
       const netSales = Math.max(0, totalRevenue - totalTax);
@@ -403,8 +418,9 @@ export const ReportsDashboard: React.FC = () => {
             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
             className="px-3 py-2 text-xs font-semibold rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-200 cursor-pointer"
           >
-            <option value={2026}>Fiscal Year 2026</option>
-            <option value={2025}>Fiscal Year 2025</option>
+            {availableYears.map(yr => (
+              <option key={yr} value={yr}>Fiscal Year {yr}</option>
+            ))}
           </select>
 
           {/* Export PDF button */}

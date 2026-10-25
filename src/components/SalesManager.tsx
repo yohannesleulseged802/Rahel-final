@@ -213,7 +213,8 @@ export const SalesManager: React.FC = () => {
   }, [saleItems]);
 
   const netTaxable = Math.max(0, subtotal - discountTotal);
-  const taxTotal = netTaxable * settings.taxRate;
+  const effectiveTaxRate = settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0;
+  const taxTotal = netTaxable * effectiveTaxRate;
   const grandTotal = netTaxable + taxTotal;
   const costTotal = useMemo(() => {
     return saleItems.reduce((sum, item) => sum + item.product.costPrice * item.quantity, 0);
@@ -692,7 +693,9 @@ export const SalesManager: React.FC = () => {
                   </span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-neutral-400 uppercase font-mono block">Tax ({((settings.taxRate || 0.0825) * 100).toFixed(1)}%)</span>
+                  <span className="text-[10px] text-neutral-400 uppercase font-mono block">
+                    Tax {effectiveTaxRate > 0 ? `(${((effectiveTaxRate) * 100).toFixed(1)}%)` : '(Exempt)'}
+                  </span>
                   <span className="text-xs sm:text-sm font-semibold font-mono-numbers text-neutral-200">
                     ETB {taxTotal.toFixed(2)}
                   </span>

@@ -110,17 +110,6 @@ export const Header: React.FC<HeaderProps> = () => {
         {/* Zone 3: Actions & Cashier Profile - touch target optimized */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
 
-          {/* Live Cloud Database Status */}
-          <div 
-            title={isCloudConnected ? "Live Cloud Database: All devices synchronized in real-time" : "Connecting to Live Cloud Database..."}
-            className="flex items-center gap-1 px-1.5 py-1 rounded-md bg-neutral-900 border border-neutral-800 text-[10px]"
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${isCloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-            <span className="text-neutral-300 font-mono text-[9px] hidden xl:inline">
-              {isCloudConnected ? 'Cloud Sync' : 'Syncing'}
-            </span>
-          </div>
-
           {/* Quick Universal Barcode / QR Scanner Button - 44px touch target on mobile */}
           <button
             type="button"

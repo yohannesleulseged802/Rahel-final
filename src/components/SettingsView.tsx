@@ -656,7 +656,7 @@ export const SettingsView: React.FC = () => {
                         step="0.1"
                         min="0"
                         max="100"
-                        value={((formData.taxRate || 0.15) * 100).toFixed(1)}
+                        value={((formData.taxRate ?? 0.15) * 100).toFixed(1)}
                         onChange={e => {
                           const val = parseFloat(e.target.value) || 0;
                           handleInputChange('taxRate', val / 100);
@@ -707,12 +707,12 @@ export const SettingsView: React.FC = () => {
                         <span>ETB 100.00</span>
                       </div>
                       <div className="flex justify-between text-amber-400">
-                        <span>VAT ({((formData.taxRate || 0.15) * 100).toFixed(1)}%):</span>
-                        <span>ETB {(100 * (formData.taxRate || 0.15)).toFixed(2)}</span>
+                        <span>VAT ({formData.taxEnabled !== false ? `${((formData.taxRate ?? 0.15) * 100).toFixed(1)}%` : 'Disabled'}):</span>
+                        <span>ETB {(100 * (formData.taxEnabled !== false ? (formData.taxRate ?? 0.15) : 0)).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between font-bold text-neutral-100 pt-1 border-t border-neutral-800">
                         <span>Total Customer Due:</span>
-                        <span>ETB {(100 * (1 + (formData.taxRate || 0.15))).toFixed(2)}</span>
+                        <span>ETB {(100 * (1 + (formData.taxEnabled !== false ? (formData.taxRate ?? 0.15) : 0))).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -1004,12 +1004,12 @@ export const SettingsView: React.FC = () => {
                         <span>ETB 147.30</span>
                       </div>
                       <div className="flex justify-between text-neutral-700">
-                        <span>VAT ({((formData.taxRate || 0.15) * 100).toFixed(0)}%):</span>
-                        <span>ETB {(147.3 * (formData.taxRate || 0.15)).toFixed(2)}</span>
+                        <span>VAT ({formData.taxEnabled !== false ? `${((formData.taxRate ?? 0.15) * 100).toFixed(0)}%` : 'Exempt'}):</span>
+                        <span>ETB {(147.3 * (formData.taxEnabled !== false ? (formData.taxRate ?? 0.15) : 0)).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between font-bold text-xs pt-1 border-t border-neutral-900">
                         <span>TOTAL DUE:</span>
-                        <span>ETB {(147.3 * (1 + (formData.taxRate || 0.15))).toFixed(2)}</span>
+                        <span>ETB {(147.3 * (1 + (formData.taxEnabled !== false ? (formData.taxRate ?? 0.15) : 0))).toFixed(2)}</span>
                       </div>
                     </div>
 
@@ -1024,6 +1024,7 @@ export const SettingsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
+                      const effectiveTax = formData.taxEnabled !== false ? (formData.taxRate ?? 0.15) : 0;
                       const mockTx: any = {
                         id: 'sample-tx',
                         receiptNumber: 'REC-2026-0842',
@@ -1038,9 +1039,9 @@ export const SettingsView: React.FC = () => {
                         ],
                         subtotal: 147.30,
                         discountTotal: 0,
-                        taxTotal: Number((147.30 * (formData.taxRate || 0.15)).toFixed(2)),
-                        taxRate: formData.taxRate || 0.15,
-                        total: Number((147.30 * (1 + (formData.taxRate || 0.15))).toFixed(2)),
+                        taxTotal: Number((147.30 * effectiveTax).toFixed(2)),
+                        taxRate: effectiveTax,
+                        total: Number((147.30 * (1 + effectiveTax)).toFixed(2)),
                         costTotal: 60.00,
                         grossProfit: 87.30,
                         payment: { method: 'cash' },

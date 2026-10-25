@@ -368,7 +368,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((p: any) => p && !p.id?.startsWith('prod-0') && !p.id?.startsWith('prod-1') && !p.id?.startsWith('prod-2') && !p.id?.startsWith('prod-3'));
+          return parsed.filter((p: any) => p && p.id && p.name);
         }
       } catch (e) { /* fallback */ }
     }
@@ -551,7 +551,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         const liveProducts = snapshot.docs
           .map(d => d.data() as Product)
-          .filter(p => p && !p.id?.startsWith('prod-0') && !p.id?.startsWith('prod-1') && !p.id?.startsWith('prod-2') && !p.id?.startsWith('prod-3'));
+          .filter(p => p && p.id && p.name);
         setProducts(liveProducts);
         localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(liveProducts));
       }
@@ -1233,7 +1233,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const netTaxableAmount = Math.max(0, cartSubtotal - cartDiscountTotal);
-  const cartTaxTotal = Number((netTaxableAmount * settings.taxRate).toFixed(2));
+  const effectiveTaxRate = settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0;
+  const cartTaxTotal = Number((netTaxableAmount * effectiveTaxRate).toFixed(2));
   const cartTotal = Number((netTaxableAmount + cartTaxTotal).toFixed(2));
 
   // Complete Sale
@@ -1271,7 +1272,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       subtotal: cartSubtotal,
       discountTotal: cartDiscountTotal,
       taxTotal: cartTaxTotal,
-      taxRate: settings.taxRate,
+      taxRate: effectiveTaxRate,
       total: cartTotal,
       costTotal,
       grossProfit,
@@ -1353,7 +1354,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const receiptNum = `JOB-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-    const taxRate = settings.taxRate || 0.0825;
+    const taxRate = settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0;
     const taxTotal = Number((job.price * taxRate).toFixed(2));
     const total = Number((job.price + taxTotal).toFixed(2));
     const grossProfit = Number((job.price - job.cost).toFixed(2));
@@ -1453,7 +1454,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cartItems.reduce((sum, it) => sum + (it.unitPrice * it.quantity * (it.discountPercent / 100)), 0).toFixed(2)
     );
     const netTaxable = Math.max(0, subtotal - discountTotal);
-    const taxRate = settings.taxRate || 0.0825;
+    const taxRate = settings.taxEnabled !== false ? (settings.taxRate ?? 0.15) : 0;
     const taxTotal = Number((netTaxable * taxRate).toFixed(2));
     const total = Number((netTaxable + taxTotal).toFixed(2));
     const costTotal = Number(cartItems.reduce((sum, it) => sum + (it.costPrice || 0) * it.quantity, 0).toFixed(2));
@@ -1758,12 +1759,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addProduct = (newProd: Omit<Product, 'id'>): Product => {
     const prod: Product = {
       ...newProd,
-      id: `prod-${Date.now()}`,
+      id: `prod-item-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
     };
-    setProducts(prev => [prod, ...prev]);
+    setProducts(prev => {
+      const filtered = prev.filter(p => p.id !== prod.id);
+      const updated = [prod, ...filtered];
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
     setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(prod))
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
-    showToast(`Added ${prod.name} to catalog.`);
+    showToast(`Added "${prod.name}" to inventory.`);
     return prod;
   };
 

@@ -99,6 +99,7 @@ export const PurchaseReportView: React.FC = () => {
   // Filter Purchases
   const filteredPurchases = useMemo(() => {
     return purchases.filter((po) => {
+      if (!po || !po.timestamp) return false;
       const poDate = po.timestamp.slice(0, 10);
 
       // Date matching
@@ -125,10 +126,10 @@ export const PurchaseReportView: React.FC = () => {
       // Search matching (PO #, invoice #, supplier name, item names)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchPO = po.poNumber.toLowerCase().includes(q);
+        const matchPO = (po.poNumber || '').toLowerCase().includes(q);
         const matchSupplier = (po.supplierName || 'General Vendor').toLowerCase().includes(q);
         const matchInvoice = !!po.supplierInvoice?.toLowerCase().includes(q);
-        const matchItems = po.items.some(it => it.name.toLowerCase().includes(q) || it.sku.toLowerCase().includes(q));
+        const matchItems = Array.isArray(po.items) && po.items.some(it => (it.name || '').toLowerCase().includes(q) || (it.sku || '').toLowerCase().includes(q));
         if (!matchPO && !matchSupplier && !matchInvoice && !matchItems) return false;
       }
 

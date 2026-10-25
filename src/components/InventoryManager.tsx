@@ -189,27 +189,48 @@ export const InventoryManager: React.FC = () => {
     e.preventDefault();
     if (!formData.name.trim()) return;
 
+    const sanitizedCategory = (formData.category || '').trim() || 'General Stationery';
+    const parsedPrice = Math.max(0, Number(formData.price) || 0);
+    const parsedCost = Math.max(0, Number(formData.costPrice) || 0);
+    const parsedStock = Math.max(0, Number(formData.stock) || 0);
+    const parsedMinStock = Math.max(0, Number(formData.minStockAlert) || 0);
+    const sanitizedSku = formData.sku.trim() || `ST-${Math.floor(1000 + Math.random() * 9000)}`;
+    const sanitizedBarcode = formData.barcode.trim();
+
     if (editingProduct) {
       updateProduct({
         ...editingProduct,
         ...formData,
-        price: Number(formData.price),
-        costPrice: Number(formData.costPrice),
-        stock: Number(formData.stock),
-        minStockAlert: Number(formData.minStockAlert),
+        name: formData.name.trim(),
+        category: sanitizedCategory,
+        price: parsedPrice,
+        costPrice: parsedCost,
+        stock: parsedStock,
+        minStockAlert: parsedMinStock,
+        sku: sanitizedSku,
+        barcode: sanitizedBarcode,
       });
     } else {
       addProduct({
         ...formData,
-        price: Number(formData.price),
-        costPrice: Number(formData.costPrice),
-        stock: Number(formData.stock),
-        minStockAlert: Number(formData.minStockAlert),
+        name: formData.name.trim(),
+        category: sanitizedCategory,
+        price: parsedPrice,
+        costPrice: parsedCost,
+        stock: parsedStock,
+        minStockAlert: parsedMinStock,
+        sku: sanitizedSku,
+        barcode: sanitizedBarcode,
       });
+      // Ensure the newly added item is immediately visible in the inventory list
+      setSelectedCategory('All');
+      setSearchQuery('');
+      setOnlyLowStock(false);
     }
 
     setIsAddModalOpen(false);
   };
+
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">

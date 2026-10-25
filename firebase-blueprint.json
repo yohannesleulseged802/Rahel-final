@@ -64,7 +64,7 @@
         "paymentStatus": { "type": "string", "maxLength": 32 },
         "notes": { "type": "string", "maxLength": 1000 }
       },
-      "required": ["id", "poNumber", "supplierName", "totalCost", "itemCount", "status", "paymentStatus"]
+      "required": ["id", "poNumber", "totalCost", "itemCount", "status", "paymentStatus"]
     },
     "StoreSettings": {
       "title": "StoreSettings",
