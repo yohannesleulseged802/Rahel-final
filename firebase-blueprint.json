@@ -115,6 +115,29 @@
         "avatarColor": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "name", "email"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Internal business operating expense record (Fuel, Rent, Salary, etc.)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "expenseNumber": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "categoryLabel": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "paidAccount": { "type": "string", "maxLength": 128 },
+        "paidTo": { "type": "string", "maxLength": 200 },
+        "referenceNumber": { "type": "string", "maxLength": 128 },
+        "periodMonth": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 64 },
+        "time": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "operatorId": { "type": "string", "maxLength": 128 },
+        "operatorName": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "expenseNumber", "category", "amount", "paidAccount", "paidTo", "date", "timestamp"]
     }
   },
   "firestore": {
@@ -133,6 +156,10 @@
     "/settings/{settingId}": {
       "schema": "StoreSettings",
       "description": "Store configuration and tax settings"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Operating expenses transactions for fuel, rent, salary paid via Telebirr or banks"
     },
     "/users/{userId}": {
       "schema": "User",

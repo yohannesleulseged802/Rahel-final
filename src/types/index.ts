@@ -101,7 +101,31 @@ export interface CartItem {
   taxable: boolean;
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'split' | 'store_credit';
+export type PaymentMethod = 
+  | 'cbe' 
+  | 'abyssinia' 
+  | 'telebirr_maria' 
+  | 'telebirr_rahel' 
+  | 'awash' 
+  | 'dashen' 
+  | 'cash' 
+  | 'card' 
+  | 'split' 
+  | 'store_credit' 
+  | (string & {});
+
+export const PAYMENT_METHOD_NAMES: Record<string, string> = {
+  cbe: 'CBE (Commercial Bank of Ethiopia)',
+  abyssinia: 'Abyssinia Bank',
+  telebirr_maria: 'Telebirr (Maria)',
+  telebirr_rahel: 'Telebirr (Rahel)',
+  awash: 'Awash Bank',
+  dashen: 'Dashen Bank',
+  cash: 'Cash Settlement',
+  card: 'Card / POS Terminal',
+  split: 'Split Payment',
+  store_credit: 'Internal Account / Store Credit'
+};
 
 export interface PaymentDetails {
   method: PaymentMethod;
@@ -166,7 +190,7 @@ export interface CashDrawerShift {
   notes?: string;
 }
 
-export type TabType = 'home' | 'sales' | 'purchase' | 'inventory' | 'services' | 'reports' | 'labels' | 'settings';
+export type TabType = 'home' | 'sales' | 'purchase' | 'inventory' | 'services' | 'expenses' | 'reports' | 'labels' | 'settings';
 
 export interface StoreSettings {
   storeName: string;
@@ -249,6 +273,36 @@ export interface PurchaseTransaction {
   status: 'received' | 'ordered' | 'pending';
   paymentStatus: 'paid' | 'pending' | 'on_account';
   notes?: string;
+}
+
+export type ExpenseCategory = 'fuel' | 'rent' | 'salary' | 'other';
+export type TelebirrAccount = 'Telebirr (Maria)' | 'Telebirr (Rahel)';
+export type ExpensePaymentAccount = 
+  | 'CBE'
+  | 'Abyssinia Bank'
+  | 'Telebirr (Maria)'
+  | 'Telebirr (Rahel)'
+  | 'Awash Bank'
+  | 'Dashen Bank'
+  | 'Cash'
+  | (string & {});
+
+export interface ExpenseTransaction {
+  id: string;
+  expenseNumber: string; // e.g. EXP-1001
+  category: ExpenseCategory; // 'fuel' | 'rent' | 'salary' | 'other'
+  categoryLabel: string; // 'Fuel Expenses' | 'Rent' | 'Salary' | 'Other'
+  amount: number;
+  paidAccount: ExpensePaymentAccount; // 'Telebirr (Maria)' | 'Telebirr (Rahel)' | 'Cash'
+  referenceNumber?: string; // Telebirr confirmation code / SMS receipt
+  paidTo?: string; // Driver, Petrol Station, Landlord, Employee Name
+  periodMonth?: string; // e.g. "October 2026"
+  notes?: string;
+  timestamp: string; // ISO string
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  operatorId: string;
+  operatorName: string;
 }
 
 

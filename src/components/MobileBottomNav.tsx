@@ -15,7 +15,8 @@ import {
   ChevronRight,
   ShieldCheck,
   User as UserIcon,
-  Barcode
+  Barcode,
+  Wallet
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { TabType } from '../types';
@@ -49,6 +50,12 @@ export const MobileBottomNav: React.FC = () => {
       label: 'Services Atelier', 
       desc: 'Job costing, printing, binding & copy services', 
       icon: Printer 
+    },
+    { 
+      id: 'expenses' as TabType, 
+      label: 'Other Expenses', 
+      desc: 'Fuel, Rent & Salary via Telebirr & Banks', 
+      icon: Wallet 
     },
     { 
       id: 'reports' as TabType, 

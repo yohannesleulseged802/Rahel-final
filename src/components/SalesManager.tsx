@@ -26,7 +26,7 @@ import {
   X
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
-import { Product, PaymentMethod, SaleTransaction } from '../types';
+import { Product, PaymentMethod, SaleTransaction, PAYMENT_METHOD_NAMES } from '../types';
 import { generateSaleReceiptPDF } from '../utils/pdfExport';
 import { 
   getLocalDateString, 
@@ -611,10 +611,22 @@ export const SalesManager: React.FC = () => {
                   onChange={(e) => setPaymentMethod(e.target.value as any)}
                   className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-neutral-100 focus:outline-none focus:border-amber-500/50"
                 >
-                  <option value="cash">Cash Settlement</option>
-                  <option value="card">Card / Electronic Terminal</option>
-                  <option value="store_credit">Internal Account / Store Credit</option>
-                  <option value="split">Split Payment</option>
+                  <optgroup label="Mobile Money">
+                    <option value="telebirr_maria">Telebirr (Maria)</option>
+                    <option value="telebirr_rahel">Telebirr (Rahel)</option>
+                  </optgroup>
+                  <optgroup label="Commercial Banks">
+                    <option value="cbe">CBE (Commercial Bank of Ethiopia)</option>
+                    <option value="abyssinia">Abyssinia Bank</option>
+                    <option value="awash">Awash Bank</option>
+                    <option value="dashen">Dashen Bank</option>
+                  </optgroup>
+                  <optgroup label="Counter & Other">
+                    <option value="cash">Cash Settlement</option>
+                    <option value="card">Card / Electronic Terminal</option>
+                    <option value="store_credit">Internal Account / Store Credit</option>
+                    <option value="split">Split Payment</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -783,8 +795,8 @@ export const SalesManager: React.FC = () => {
                         {tx.customerName || 'General Customer'}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-neutral-500">
-                          {tx.items.length} item(s) · {tx.payment.method.toUpperCase()}
+                        <span className="text-[10px] font-mono text-neutral-400">
+                          {tx.items.length} item(s) · {PAYMENT_METHOD_NAMES[tx.payment.method] || tx.payment.method.toUpperCase()}
                         </span>
                         <button
                           type="button"
@@ -844,7 +856,7 @@ export const SalesManager: React.FC = () => {
               </div>
               <div className="flex justify-between py-1 border-b border-neutral-800/60">
                 <span className="text-neutral-400">Payment Method</span>
-                <span className="uppercase font-mono text-amber-400">{viewingSale.payment.method}</span>
+                <span className="font-mono text-amber-400 font-semibold">{PAYMENT_METHOD_NAMES[viewingSale.payment.method] || viewingSale.payment.method.toUpperCase()}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-neutral-800/60">
                 <span className="text-neutral-400">Receipt Status</span>
@@ -942,7 +954,7 @@ export const SalesManager: React.FC = () => {
               </div>
               <div className="flex justify-between text-neutral-400">
                 <span>Payment Settlement:</span>
-                <span className="font-mono uppercase text-amber-400">{completedSaleModal.payment.method}</span>
+                <span className="font-mono text-amber-400 font-semibold">{PAYMENT_METHOD_NAMES[completedSaleModal.payment.method] || completedSaleModal.payment.method.toUpperCase()}</span>
               </div>
               <div className="flex justify-between text-neutral-400">
                 <span>Recorded Date &amp; Time:</span>

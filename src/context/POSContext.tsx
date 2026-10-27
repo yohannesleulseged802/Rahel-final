@@ -13,7 +13,10 @@ import {
   PurchaseTransaction,
   PurchaseItem,
   PaymentMethod,
-  TabType
+  TabType,
+  ExpenseTransaction,
+  ExpenseCategory,
+  ExpensePaymentAccount
 } from '../types';
 import { 
   INITIAL_USERS, 
@@ -57,6 +60,7 @@ interface POSContextType {
   parkedTickets: ParkedTicket[];
   transactions: SaleTransaction[];
   purchases: PurchaseTransaction[];
+  expenses: ExpenseTransaction[];
   settings: StoreSettings;
   activeReceipt: SaleTransaction | null;
   activeTab: TabType;
@@ -181,6 +185,22 @@ interface POSContextType {
     time?: string;
     timestamp?: string;
   }) => PurchaseTransaction;
+
+  // Other Expenses (Fuel, Rent, Salary via Telebirr)
+  recordExpense: (expenseData: {
+    category: ExpenseCategory;
+    categoryLabel?: string;
+    amount: number;
+    paidAccount: ExpensePaymentAccount;
+    referenceNumber?: string;
+    paidTo?: string;
+    periodMonth?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+    timestamp?: string;
+  }) => ExpenseTransaction;
+  deleteExpense: (expenseId: string) => Promise<boolean>;
 
   // Cart operations
   addToCart: (item: Omit<CartItem, 'id'>) => void;
@@ -439,6 +459,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return [];
   });
 
+  // Other Expenses (Fuel, Rent, Salary via Telebirr Maria / Rahel): defaults strictly to []
+  const [expenses, setExpenses] = useState<ExpenseTransaction[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}expenses`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { /* fallback */ }
+    }
+    return [];
+  });
+
   // Inactivity tracking ref - strictly initialized from existing session timestamp to prevent extending timer on page reload
   const lastActivityRef = useRef<number>((() => {
     try {
@@ -592,6 +624,24 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleFirestoreError(error, OperationType.GET, 'purchases');
     });
 
+    // 3.5. Live Other Expenses (Fuel, Rent, Salary via Telebirr Maria / Rahel)
+    const expensesCol = collection(db, 'expenses');
+    const unsubExpenses = onSnapshot(expensesCol, (snapshot) => {
+      setIsCloudConnected(true);
+      if (snapshot.empty) {
+        setExpenses([]);
+        localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify([]));
+      } else {
+        const liveExpenses = snapshot.docs
+          .map(d => d.data() as ExpenseTransaction)
+          .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        setExpenses(liveExpenses);
+        localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify(liveExpenses));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'expenses');
+    });
+
     // 4. Live Store Settings (Enforcing permanent ETB currency & master passcode)
     const settingsDocRef = doc(db, 'settings', 'store_config');
     const unsubSettings = onSnapshot(settingsDocRef, (snap) => {
@@ -633,6 +683,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubProducts();
       unsubSales();
       unsubPurchases();
+      unsubExpenses();
       unsubSettings();
       unsubUsers();
     };
@@ -670,6 +721,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}purchases`, JSON.stringify(purchases));
   }, [purchases]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify(expenses));
+  }, [expenses]);
 
   // Toast feedback helper
   const showToast = (msg: string) => {
@@ -1753,6 +1808,89 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newPO;
   };
 
+  // Other Expenses (Fuel, Rent, Salary via Telebirr Maria / Rahel)
+  const recordExpense = (expenseData: {
+    category: ExpenseCategory;
+    categoryLabel?: string;
+    amount: number;
+    paidAccount: ExpensePaymentAccount;
+    referenceNumber?: string;
+    paidTo?: string;
+    periodMonth?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+    timestamp?: string;
+  }): ExpenseTransaction => {
+    if (!currentUser) {
+      throw new Error('Must be logged in to record expenses');
+    }
+    const cleanAmount = Math.max(0, Number(expenseData.amount) || 0);
+    if (cleanAmount <= 0) {
+      throw new Error('Expense amount must be greater than zero');
+    }
+
+    const defaultLabels: Record<ExpenseCategory, string> = {
+      fuel: 'Fuel Expenses',
+      rent: 'Rent',
+      salary: 'Salary',
+      other: 'Other'
+    };
+
+    const expNumber = `EXP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const effectiveTimestamp = expenseData.timestamp || resolveAccurateTimestamp(expenseData.date, expenseData.time);
+    const dateObj = new Date(effectiveTimestamp);
+    const dateStr = !isNaN(dateObj.getTime()) ? dateObj.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    const timeStr = !isNaN(dateObj.getTime()) ? dateObj.toTimeString().slice(0, 5) : new Date().toTimeString().slice(0, 5);
+
+    const newExpense: ExpenseTransaction = {
+      id: `exp-${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      expenseNumber: expNumber,
+      category: expenseData.category,
+      categoryLabel: expenseData.categoryLabel || defaultLabels[expenseData.category] || 'Other Expense',
+      amount: Number(cleanAmount.toFixed(2)),
+      paidAccount: expenseData.paidAccount || 'Telebirr (Maria)',
+      referenceNumber: expenseData.referenceNumber?.trim() || undefined,
+      paidTo: expenseData.paidTo?.trim() || undefined,
+      periodMonth: expenseData.periodMonth?.trim() || undefined,
+      notes: expenseData.notes?.trim() || undefined,
+      timestamp: effectiveTimestamp,
+      date: dateStr,
+      time: timeStr,
+      operatorId: currentUser.id,
+      operatorName: currentUser.name,
+    };
+
+    setDoc(doc(db, 'expenses', newExpense.id), sanitizeForFirestore(newExpense))
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'expenses'));
+
+    setExpenses((prev) => {
+      const next = [newExpense, ...prev];
+      localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify(next));
+      return next;
+    });
+
+    showToast(`Recorded ${newExpense.categoryLabel}: ${newExpense.amount.toLocaleString()} ETB via ${newExpense.paidAccount}`);
+    return newExpense;
+  };
+
+  const deleteExpense = async (expenseId: string): Promise<boolean> => {
+    try {
+      await deleteDoc(doc(db, 'expenses', expenseId));
+      setExpenses((prev) => {
+        const next = prev.filter(e => e.id !== expenseId);
+        localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify(next));
+        return next;
+      });
+      showToast('Expense record deleted.');
+      return true;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'expenses');
+      showToast('Failed to delete expense record.');
+      return false;
+    }
+  };
+
   // Park tickets
   const parkCurrentTicket = (label?: string, customerName?: string) => {
     if (cart.length === 0) {
@@ -2097,11 +2235,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 300);
   };
 
-  // 1. "Yearly" Reset: Clears operational transactions (sales, purchases, shifts) for the closed financial year while keeping products, inventory stock, user accounts, and store settings
+  // 1. "Yearly" Reset: Clears operational transactions (sales, purchases, expenses, shifts) for the closed financial year while keeping products, inventory stock, user accounts, and store settings
   const resetYearlyData = async () => {
     // 1. Instantly clear local state for responsive UI
     setTransactions([]);
     setPurchases([]);
+    setExpenses([]);
     setCart([]);
     setParkedTickets([]);
     setShiftHistory([]);
@@ -2110,12 +2249,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 2. Clear localStorage keys explicitly
     localStorage.setItem(`${STORAGE_PREFIX}transactions`, JSON.stringify([]));
     localStorage.setItem(`${STORAGE_PREFIX}purchases`, JSON.stringify([]));
+    localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify([]));
     localStorage.setItem(`${STORAGE_PREFIX}parked`, JSON.stringify([]));
     localStorage.setItem(`${STORAGE_PREFIX}shiftHistory`, JSON.stringify([]));
     localStorage.setItem(`${STORAGE_PREFIX}cart`, JSON.stringify([]));
     localStorage.removeItem(`${STORAGE_PREFIX}currentShift`);
 
-    // 3. Delete existing sales and purchases records from Firestore
+    // 3. Delete existing sales, purchases, and expenses records from Firestore
     try {
       const salesSnap = await getDocs(collection(db, 'sales'));
       if (!salesSnap.empty) {
@@ -2130,6 +2270,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         purchasesSnap.docs.forEach(docSnap => batchPurchases.delete(docSnap.ref));
         await batchPurchases.commit();
       }
+
+      const expensesSnap = await getDocs(collection(db, 'expenses'));
+      if (!expensesSnap.empty) {
+        const batchExpenses = writeBatch(db);
+        expensesSnap.docs.forEach(docSnap => batchExpenses.delete(docSnap.ref));
+        await batchExpenses.commit();
+      }
     } catch (e) {
       console.error('Firestore yearly cleanup error:', e);
     }
@@ -2142,6 +2289,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 1. Set local state to clean initial defaults
     setTransactions([]);
     setPurchases([]);
+    setExpenses([]);
     setCart([]);
     setParkedTickets([]);
     setShiftHistory([]);
@@ -2159,6 +2307,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       localStorage.setItem(`${STORAGE_PREFIX}transactions`, JSON.stringify([]));
       localStorage.setItem(`${STORAGE_PREFIX}purchases`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify([]));
       localStorage.setItem(`${STORAGE_PREFIX}cart`, JSON.stringify([]));
       localStorage.setItem(`${STORAGE_PREFIX}parked`, JSON.stringify([]));
       localStorage.setItem(`${STORAGE_PREFIX}shiftHistory`, JSON.stringify([]));
@@ -2171,7 +2320,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sessionStorage.clear();
     } catch (e) {}
 
-    // 3. Reset Firestore collections: products wiped, sales/purchases deleted, all users deleted
+    // 3. Reset Firestore collections: products wiped, sales/purchases/expenses deleted, all users deleted
     try {
       // Clear all sales
       const salesSnap = await getDocs(collection(db, 'sales'));
@@ -2187,6 +2336,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const batchPurchases = writeBatch(db);
         purchasesSnap.docs.forEach(d => batchPurchases.delete(d.ref));
         await batchPurchases.commit();
+      }
+
+      // Clear all expenses
+      const expensesSnap = await getDocs(collection(db, 'expenses'));
+      if (!expensesSnap.empty) {
+        const batchExpenses = writeBatch(db);
+        expensesSnap.docs.forEach(d => batchExpenses.delete(d.ref));
+        await batchExpenses.commit();
       }
 
       // Clear all products
@@ -2230,6 +2387,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         parkedTickets,
         transactions,
         purchases,
+        expenses,
         settings,
         activeReceipt,
         activeTab,
@@ -2299,6 +2457,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         recordSale,
         updateSaleReceiptStatus,
         recordPurchase,
+        recordExpense,
+        deleteExpense,
         recordServiceJob,
         setActiveReceipt,
 

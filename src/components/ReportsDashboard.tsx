@@ -10,7 +10,13 @@ import {
   Layers,
   ShoppingBag,
   Truck,
-  AlertTriangle
+  AlertTriangle,
+  Wallet,
+  Fuel,
+  Building2,
+  Smartphone,
+  Landmark,
+  Banknote
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { POReport } from './POReport';
@@ -19,10 +25,10 @@ import { PurchaseReportView } from './PurchaseReportView';
 import { generateBrandedPDFReport } from '../utils/pdfExport';
 
 export const ReportsDashboard: React.FC = () => {
-  const { transactions, purchases, products, settings, showToast } = usePOS();
+  const { transactions, purchases, products, settings, showToast, expenses } = usePOS();
 
   const [activeReportTab, setActiveReportTab] = useState<
-    'sales_report' | 'purchase_report' | 'po_report' | 'monthly' | 'services' | 'cashiers' | 'products' | 'tax'
+    'sales_report' | 'purchase_report' | 'po_report' | 'expenses_report' | 'monthly' | 'services' | 'cashiers' | 'products' | 'tax'
   >('sales_report');
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [drilldownMonth, setDrilldownMonth] = useState<number | null>(null);
@@ -128,6 +134,64 @@ export const ReportsDashboard: React.FC = () => {
 
     return { rev, srv, prod, cost, profit, txs, tax, margin, aov };
   }, [monthlyData]);
+
+  // Operating Expenses for the Selected Fiscal Year
+  const yearExpenses = useMemo(() => {
+    const safe = Array.isArray(expenses) ? expenses : [];
+    return safe.filter(e => {
+      if (!e.date) return false;
+      const yr = new Date(e.date).getFullYear();
+      return yr === selectedYear;
+    });
+  }, [expenses, selectedYear]);
+
+  const expenseBreakdown = useMemo(() => {
+    let fuelTotal = 0;
+    let rentTotal = 0;
+    let salaryTotal = 0;
+    let otherTotal = 0;
+    let mariaTotal = 0;
+    let rahelTotal = 0;
+    let cbeTotal = 0;
+    let abyssiniaTotal = 0;
+    let awashTotal = 0;
+    let dashenTotal = 0;
+    let cashTotal = 0;
+
+    yearExpenses.forEach(exp => {
+      const amt = Number(exp.amount) || 0;
+      if (exp.category === 'fuel') fuelTotal += amt;
+      else if (exp.category === 'rent') rentTotal += amt;
+      else if (exp.category === 'salary') salaryTotal += amt;
+      else otherTotal += amt;
+
+      if (exp.paidAccount === 'Telebirr (Maria)') mariaTotal += amt;
+      else if (exp.paidAccount === 'Telebirr (Rahel)') rahelTotal += amt;
+      else if (exp.paidAccount === 'CBE') cbeTotal += amt;
+      else if (exp.paidAccount === 'Abyssinia Bank') abyssiniaTotal += amt;
+      else if (exp.paidAccount === 'Awash Bank') awashTotal += amt;
+      else if (exp.paidAccount === 'Dashen Bank') dashenTotal += amt;
+      else if (exp.paidAccount === 'Cash') cashTotal += amt;
+    });
+
+    const total = fuelTotal + rentTotal + salaryTotal + otherTotal;
+    return {
+      total,
+      fuelTotal,
+      rentTotal,
+      salaryTotal,
+      otherTotal,
+      mariaTotal,
+      rahelTotal,
+      cbeTotal,
+      abyssiniaTotal,
+      awashTotal,
+      dashenTotal,
+      cashTotal,
+    };
+  }, [yearExpenses]);
+
+  const netAnnualProfit = yearTotals.profit - expenseBreakdown.total;
 
   const maxMonthlyRevenue = Math.max(...monthlyData.map(m => m.totalRevenue), 1000);
 
@@ -347,6 +411,30 @@ export const ReportsDashboard: React.FC = () => {
         headers,
         rows,
       });
+    } else if (activeReportTab === 'expenses_report') {
+      const headers = ['Ref #', 'Date', 'Category', 'Paid To / Payee', 'Account', 'Code', 'Amount (ETB)'];
+      const rows: (string | number)[][] = yearExpenses.map((exp) => [
+        exp.expenseNumber || 'N/A',
+        exp.date || '',
+        exp.categoryLabel || exp.category || 'General',
+        exp.paidTo || '',
+        exp.paidAccount || '',
+        exp.referenceNumber || 'N/A',
+        `ETB ${exp.amount.toFixed(2)}`,
+      ]);
+      generateBrandedPDFReport({
+        filename: `Rahel_Stationary_Expenses_Audit_Report_${selectedYear}.pdf`,
+        title: `Operating Expenses Audit Report (${selectedYear})`,
+        subtitle: 'Fuel, Rent, Salary & Operating Disbursements (Telebirr & Banks)',
+        metaRight: `Fiscal Year ${selectedYear}`,
+        metrics: [
+          ...baseMetrics,
+          { label: 'Total Operating Expenses', value: `ETB ${expenseBreakdown.total.toFixed(2)}` },
+          { label: 'Net Annual Profit', value: `ETB ${netAnnualProfit.toFixed(2)}` },
+        ],
+        headers,
+        rows,
+      });
     } else if (activeReportTab === 'tax') {
       const headers = ['Month', 'Transactions', 'Gross Sales', 'Taxable Net Revenue', 'Tax Rate', 'Sales Tax Collected'];
       const rows = monthlyData.map((m) => [
@@ -444,10 +532,10 @@ export const ReportsDashboard: React.FC = () => {
       </div>
 
       {/* Primary Annual Financial KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="p-4 rounded-xl border border-neutral-800 bg-neutral-900 shadow-sm">
           <span className="text-xs text-neutral-400 font-medium block">Total Annual Revenue</span>
-          <span className="text-2xl font-bold font-mono-numbers text-amber-300 mt-1 block">
+          <span className="text-xl sm:text-2xl font-bold font-mono-numbers text-amber-300 mt-1 block">
             ETB {yearTotals.rev.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <span className="text-[11px] text-neutral-400 mt-1 block">
@@ -457,7 +545,7 @@ export const ReportsDashboard: React.FC = () => {
 
         <div className="p-4 rounded-xl border border-neutral-800 bg-neutral-900 shadow-sm">
           <span className="text-xs text-neutral-400 font-medium block">Copy &amp; Print Services</span>
-          <span className="text-2xl font-bold font-mono-numbers text-amber-400 mt-1 block">
+          <span className="text-xl sm:text-2xl font-bold font-mono-numbers text-amber-400 mt-1 block">
             ETB {yearTotals.srv.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <span className="text-[11px] text-neutral-400 mt-1 block">
@@ -466,22 +554,36 @@ export const ReportsDashboard: React.FC = () => {
         </div>
 
         <div className="p-4 rounded-xl border border-neutral-800 bg-neutral-900 shadow-sm">
-          <span className="text-xs text-neutral-400 font-medium block">Gross Profit</span>
-          <span className="text-2xl font-bold font-mono-numbers text-emerald-400 mt-1 block">
+          <span className="text-xs text-neutral-400 font-medium block">Gross Trading Profit</span>
+          <span className="text-xl sm:text-2xl font-bold font-mono-numbers text-emerald-400 mt-1 block">
             ETB {yearTotals.profit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <span className="text-[11px] text-neutral-400 mt-1 block">
-            Overall Margin: {yearTotals.margin.toFixed(1)}%
+            Trading Margin: {yearTotals.margin.toFixed(1)}%
           </span>
         </div>
 
-        <div className="p-4 rounded-xl border border-neutral-800 bg-neutral-900 shadow-sm">
-          <span className="text-xs text-neutral-400 font-medium block">Average Ticket (AOV)</span>
-          <span className="text-2xl font-bold font-mono-numbers text-neutral-100 mt-1 block">
-            ETB {yearTotals.aov.toFixed(2)}
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-neutral-900 shadow-sm">
+          <span className="text-xs text-rose-300/90 font-medium block flex items-center gap-1">
+            <Wallet className="w-3.5 h-3.5 text-rose-400" /> Other Expenses
+          </span>
+          <span className="text-xl sm:text-2xl font-bold font-mono-numbers text-rose-400 mt-1 block">
+            ETB {expenseBreakdown.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <span className="text-[11px] text-neutral-400 mt-1 block">
-            Retail items + On-demand jobs
+            Fuel, Rent &amp; Salaries
+          </span>
+        </div>
+
+        <div className="p-4 rounded-xl border border-cyan-500/30 bg-neutral-900 shadow-sm col-span-2 lg:col-span-1">
+          <span className="text-xs text-cyan-300/90 font-medium block flex items-center gap-1">
+            <TrendingUp className="w-3.5 h-3.5 text-cyan-400" /> Net Business Profit
+          </span>
+          <span className={`text-xl sm:text-2xl font-bold font-mono-numbers mt-1 block ${netAnnualProfit >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
+            ETB {netAnnualProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+          <span className="text-[11px] text-neutral-400 mt-1 block">
+            Gross profit minus expenses
           </span>
         </div>
       </div>
@@ -490,6 +592,7 @@ export const ReportsDashboard: React.FC = () => {
       <div className="flex items-center gap-1.5 p-1.5 bg-neutral-900 rounded-xl border border-neutral-800 overflow-x-auto no-print">
         {[
           { id: 'sales_report' as const, label: 'Sales Report', icon: ShoppingBag },
+          { id: 'expenses_report' as const, label: 'Other Expenses Audit', icon: Wallet },
           { id: 'purchase_report' as const, label: 'Purchase Report', icon: Truck },
           { id: 'po_report' as const, label: 'PO Report (< 5 Stock)', icon: AlertTriangle },
           { id: 'monthly' as const, label: 'Monthly Revenue Ledger', icon: BarChart3 },
@@ -525,6 +628,185 @@ export const ReportsDashboard: React.FC = () => {
           ========================================================================= */}
       {activeReportTab === 'sales_report' && (
         <SalesReportView />
+      )}
+
+      {/* =========================================================================
+          REPORT: OTHER EXPENSES AUDIT (FUEL, RENT, SALARY & TELEBIRR ACCOUNTS)
+          ========================================================================= */}
+      {activeReportTab === 'expenses_report' && (
+        <div className="space-y-6">
+          {/* Expenses Category KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            
+            <div className="p-4 rounded-xl border border-amber-500/30 bg-neutral-900 shadow-md">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-amber-300 font-semibold flex items-center gap-1.5">
+                  <Fuel className="w-4 h-4 text-amber-400" />
+                  1. Fuel Expenses
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
+                  {yearExpenses.filter(e => e.category === 'fuel').length} entries
+                </span>
+              </div>
+              <span className="text-2xl font-bold font-mono text-neutral-100 mt-2 block">
+                ETB {expenseBreakdown.fuelTotal.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-400 mt-1 block">
+                Generators, delivery vehicles &amp; travel
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-cyan-500/30 bg-neutral-900 shadow-md">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-cyan-300 font-semibold flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-cyan-400" />
+                  2. Rent &amp; Atelier
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400">
+                  {yearExpenses.filter(e => e.category === 'rent').length} entries
+                </span>
+              </div>
+              <span className="text-2xl font-bold font-mono text-neutral-100 mt-2 block">
+                ETB {expenseBreakdown.rentTotal.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-400 mt-1 block">
+                Commercial premises &amp; shop leases
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-emerald-500/30 bg-neutral-900 shadow-md">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-emerald-300 font-semibold flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-emerald-400" />
+                  3. Salaries &amp; Wages
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
+                  {yearExpenses.filter(e => e.category === 'salary').length} entries
+                </span>
+              </div>
+              <span className="text-2xl font-bold font-mono text-neutral-100 mt-2 block">
+                ETB {expenseBreakdown.salaryTotal.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-400 mt-1 block">
+                Shop staff, technicians &amp; operators
+              </span>
+            </div>
+
+          </div>
+
+          {/* Account Breakdown Strip */}
+          <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-5 space-y-4 shadow-xl">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-amber-400" />
+              Disbursements by Payment Account ({selectedYear})
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-3.5 bg-neutral-950 rounded-xl border border-cyan-500/30">
+                <div className="flex items-center gap-2 text-cyan-300 text-xs font-semibold">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Telebirr (Maria)</span>
+                </div>
+                <div className="mt-1.5 text-lg font-bold font-mono text-neutral-100">
+                  ETB {expenseBreakdown.mariaTotal.toFixed(2)}
+                </div>
+                <span className="text-[10px] text-neutral-400">Primary Mobile Money</span>
+              </div>
+
+              <div className="p-3.5 bg-neutral-950 rounded-xl border border-amber-500/30">
+                <div className="flex items-center gap-2 text-amber-300 text-xs font-semibold">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Telebirr (Rahel)</span>
+                </div>
+                <div className="mt-1.5 text-lg font-bold font-mono text-neutral-100">
+                  ETB {expenseBreakdown.rahelTotal.toFixed(2)}
+                </div>
+                <span className="text-[10px] text-neutral-400">Executive Mobile Money</span>
+              </div>
+
+              <div className="p-3.5 bg-neutral-950 rounded-xl border border-neutral-800">
+                <div className="flex items-center gap-2 text-neutral-300 text-xs font-semibold">
+                  <Landmark className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Commercial Banks</span>
+                </div>
+                <div className="mt-1.5 text-lg font-bold font-mono text-neutral-100">
+                  ETB {(expenseBreakdown.cbeTotal + expenseBreakdown.abyssiniaTotal + expenseBreakdown.awashTotal + expenseBreakdown.dashenTotal).toFixed(2)}
+                </div>
+                <span className="text-[10px] text-neutral-400">CBE, Abyssinia, Awash, Dashen</span>
+              </div>
+
+              <div className="p-3.5 bg-neutral-950 rounded-xl border border-neutral-800">
+                <div className="flex items-center gap-2 text-neutral-300 text-xs font-semibold">
+                  <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Cash Drawer</span>
+                </div>
+                <div className="mt-1.5 text-lg font-bold font-mono text-neutral-100">
+                  ETB {expenseBreakdown.cashTotal.toFixed(2)}
+                </div>
+                <span className="text-[10px] text-neutral-400">Counter Petty Cash</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Expenses Ledger Table */}
+          <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-xl">
+            <div className="p-4 bg-neutral-950/70 border-b border-neutral-800 flex items-center justify-between">
+              <span className="text-xs font-semibold text-neutral-200">
+                Expenses Recorded in Fiscal Year {selectedYear} ({yearExpenses.length} entries)
+              </span>
+              <span className="text-xs font-mono font-bold text-amber-400">
+                Total: ETB {expenseBreakdown.total.toFixed(2)}
+              </span>
+            </div>
+
+            {yearExpenses.length === 0 ? (
+              <div className="p-12 text-center text-neutral-400">
+                <Wallet className="w-8 h-8 text-neutral-600 mx-auto mb-2" />
+                <h4 className="text-sm font-semibold text-neutral-300">No Expenses Recorded for {selectedYear}</h4>
+                <p className="text-xs text-neutral-500 mt-1 max-w-sm mx-auto">
+                  Log Fuel, Rent, or Salary in the "Other Expenses" tab to track operating disbursements.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400 bg-neutral-950/50">
+                      <th className="py-2.5 px-3">Ref #</th>
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-3">Category</th>
+                      <th className="py-2.5 px-3">Payee / Recipient</th>
+                      <th className="py-2.5 px-3">Account Paid</th>
+                      <th className="py-2.5 px-3 text-right">Amount (ETB)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800/60 font-mono">
+                    {yearExpenses.map(exp => (
+                      <tr key={exp.id} className="hover:bg-neutral-850/50 transition-colors">
+                        <td className="py-2.5 px-3 font-bold text-amber-400/90">{exp.expenseNumber}</td>
+                        <td className="py-2.5 px-3 text-neutral-300">{exp.date}</td>
+                        <td className="py-2.5 px-3 font-sans capitalize text-neutral-200">{exp.categoryLabel}</td>
+                        <td className="py-2.5 px-3 font-sans text-neutral-300">{exp.paidTo}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${
+                            exp.paidAccount === 'Telebirr (Maria)' ? 'bg-cyan-950 text-cyan-300 border border-cyan-800' :
+                            exp.paidAccount === 'Telebirr (Rahel)' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                            'bg-neutral-800 text-neutral-300'
+                          }`}>
+                            {exp.paidAccount}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-neutral-100">
+                          ETB {exp.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* =========================================================================

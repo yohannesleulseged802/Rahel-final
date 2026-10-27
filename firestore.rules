@@ -64,6 +64,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Other Expenses (Fuel, Rent, Salary via Telebirr Maria / Rahel)
+    match /expenses/{expenseId} {
+      allow get: if isValidId(expenseId);
+      allow list: if true;
+      allow create, update: if isValidId(expenseId) &&
+        incoming().category is string && incoming().category.size() <= 64 &&
+        incoming().amount is number &&
+        incoming().paidAccount is string && incoming().paidAccount.size() <= 128;
+      allow delete: if isValidId(expenseId);
+    }
+
     // Operator Profile (Rahel Fira)
     match /users/{userId} {
       allow get: if isValidId(userId);

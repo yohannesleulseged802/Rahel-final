@@ -11,6 +11,7 @@ import { SalesManager } from './components/SalesManager';
 import { PurchaseManager } from './components/PurchaseManager';
 import { ServicesDesk } from './components/ServicesDesk';
 import { InventoryManager } from './components/InventoryManager';
+import { OtherExpensesManager } from './components/OtherExpensesManager';
 import { ReportsDashboard } from './components/ReportsDashboard';
 import { LabelStudio } from './components/LabelStudio';
 import { SettingsView } from './components/SettingsView';
@@ -77,6 +78,10 @@ const MainLayout: React.FC = () => {
 
         {activeTab === 'services' && (
           <ServicesDesk />
+        )}
+
+        {activeTab === 'expenses' && (
+          <OtherExpensesManager />
         )}
 
         {activeTab === 'labels' && (

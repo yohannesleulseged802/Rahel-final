@@ -20,7 +20,7 @@ import {
   Leaf
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
-import { SaleTransaction, PaymentMethod } from '../types';
+import { SaleTransaction, PaymentMethod, PAYMENT_METHOD_NAMES } from '../types';
 import { generateBrandedPDFReport, generateSaleReceiptPDF } from '../utils/pdfExport';
 
 export const SalesReportView: React.FC = () => {
@@ -226,7 +226,7 @@ export const SalesReportView: React.FC = () => {
       new Date(tx.timestamp).toLocaleString(),
       tx.customerName || 'Walk-in Customer',
       tx.items.reduce((s, it) => s + it.quantity, 0),
-      tx.payment.method.toUpperCase(),
+      PAYMENT_METHOD_NAMES[tx.payment.method] || tx.payment.method.toUpperCase(),
       `ETB ${tx.subtotal.toFixed(2)}`,
       `ETB ${tx.discountTotal.toFixed(2)}`,
       `ETB ${tx.taxTotal.toFixed(2)}`,
@@ -409,9 +409,22 @@ export const SalesReportView: React.FC = () => {
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-2.5 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-amber-500/50 cursor-pointer"
               >
                 <option value="All">All Payments</option>
-                <option value="cash">Cash Only</option>
-                <option value="card">Card / Electronic</option>
-                <option value="store_credit">Store Credit</option>
+                <optgroup label="Mobile Money">
+                  <option value="telebirr_maria">Telebirr (Maria)</option>
+                  <option value="telebirr_rahel">Telebirr (Rahel)</option>
+                </optgroup>
+                <optgroup label="Commercial Banks">
+                  <option value="cbe">CBE (Commercial Bank)</option>
+                  <option value="abyssinia">Abyssinia Bank</option>
+                  <option value="awash">Awash Bank</option>
+                  <option value="dashen">Dashen Bank</option>
+                </optgroup>
+                <optgroup label="Counter & Other">
+                  <option value="cash">Cash Settlement</option>
+                  <option value="card">Card / Electronic</option>
+                  <option value="store_credit">Store Credit</option>
+                  <option value="split">Split</option>
+                </optgroup>
               </select>
             </div>
 
@@ -606,8 +619,14 @@ export const SalesReportView: React.FC = () => {
                       </td>
 
                       <td className="py-3 px-3 text-center">
-                        <span className="inline-block px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 text-[10px] font-mono capitalize">
-                          {tx.payment.method}
+                        <span className={`inline-block px-2.5 py-1 rounded-md text-[10px] font-mono font-medium ${
+                          tx.payment.method.startsWith('telebirr')
+                            ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60'
+                            : tx.payment.method === 'cbe' || tx.payment.method === 'abyssinia' || tx.payment.method === 'awash' || tx.payment.method === 'dashen'
+                            ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                            : 'bg-neutral-800 text-neutral-300 border border-neutral-700/60'
+                        }`}>
+                          {PAYMENT_METHOD_NAMES[tx.payment.method] || tx.payment.method}
                         </span>
                       </td>
 
