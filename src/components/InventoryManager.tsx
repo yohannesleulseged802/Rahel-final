@@ -13,7 +13,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Layers
+  Layers,
+  RefreshCw
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { Product, ProductCategory } from '../types';
@@ -21,7 +22,19 @@ import { BulkImportModal } from './BulkImportModal';
 import { downloadExcelTemplate, exportInventoryToExcel } from '../utils/excelImportExport';
 
 export const InventoryManager: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct, adjustStock, showToast, openScanner, scannedInventoryEvent } = usePOS();
+  const { 
+    products, 
+    addProduct, 
+    updateProduct, 
+    deleteProduct, 
+    adjustStock, 
+    showToast, 
+    openScanner, 
+    scannedInventoryEvent,
+    isSyncingProducts,
+    lastProductSyncTime,
+    syncAllProductsToCloud
+  } = usePOS();
   const lastHandledScanRef = useRef<number>(0);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,14 +91,16 @@ export const InventoryManager: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     const list = products.filter((p) => {
+      if (!p || !p.name) return false;
+      const q = searchQuery.toLowerCase();
       const matchesSearch = 
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.barcode.includes(searchQuery) ||
-        (p.category && p.category.toLowerCase().includes(searchQuery.toLowerCase()));
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q) ||
+        (p.barcode || '').includes(searchQuery) ||
+        ((p.category || '').toLowerCase().includes(q));
 
       const matchesCat = selectedCategory === 'All' || p.category === selectedCategory;
-      const matchesLowStock = onlyLowStock ? p.stock <= p.minStockAlert : true;
+      const matchesLowStock = onlyLowStock ? p.stock <= (p.minStockAlert || 0) : true;
 
       return matchesSearch && matchesCat && matchesLowStock;
     });
@@ -99,16 +114,16 @@ export const InventoryManager: React.FC = () => {
           return sortOrder === 'asc' ? catCompare : -catCompare;
         }
         // Sub-sort by item title A-Z
-        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
       }
 
       if (sortBy === 'name') {
-        const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        const nameCompare = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
         return sortOrder === 'asc' ? nameCompare : -nameCompare;
       }
 
       if (sortBy === 'stock') {
-        return sortOrder === 'asc' ? a.stock - b.stock : b.stock - a.stock;
+        return sortOrder === 'asc' ? (a.stock || 0) - (b.stock || 0) : (b.stock || 0) - (a.stock || 0);
       }
 
       if (sortBy === 'price') {
@@ -245,8 +260,34 @@ export const InventoryManager: React.FC = () => {
           <p className="text-sm text-neutral-400 mt-0.5">
             Monitor real-time inventory levels, wholesale cost margins, and low stock thresholds in the store.
           </p>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 font-mono text-[11px]">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              Auto-Sync Active (Every 10s &amp; on insert)
+            </span>
+            {lastProductSyncTime && (
+              <span className="text-neutral-400 text-xs flex items-center gap-1">
+                Last synced: <span className="font-mono text-neutral-200">{lastProductSyncTime}</span>
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Instant Cloud Sync Button */}
+          <button
+            type="button"
+            onClick={async () => {
+              await syncAllProductsToCloud();
+              showToast('All inventory items synchronized with Firestore Cloud.');
+            }}
+            disabled={isSyncingProducts}
+            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 hover:border-emerald-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Force immediate synchronization of all inventory items to Firestore cloud"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncingProducts ? 'animate-spin' : ''}`} />
+            <span>{isSyncingProducts ? 'Syncing...' : 'Sync Now'}</span>
+          </button>
+
           {/* Download Blank Template */}
           <button
             type="button"

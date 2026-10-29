@@ -144,6 +144,7 @@ export interface SaleTransaction {
   cashierId: string;
   cashierName: string;
   customerName?: string;
+  customerPhone?: string;
   customerEmail?: string;
   items: CartItem[];
   subtotal: number;
@@ -190,7 +191,7 @@ export interface CashDrawerShift {
   notes?: string;
 }
 
-export type TabType = 'home' | 'sales' | 'purchase' | 'inventory' | 'services' | 'expenses' | 'reports' | 'labels' | 'settings';
+export type TabType = 'home' | 'sales' | 'credit_ledger' | 'purchase' | 'inventory' | 'services' | 'expenses' | 'reports' | 'labels' | 'settings';
 
 export interface StoreSettings {
   storeName: string;
@@ -305,4 +306,46 @@ export interface ExpenseTransaction {
   operatorName: string;
 }
 
+export type CreditEntryType = 'issue_credit' | 'repayment';
 
+export type CreditAccountStatus = 'active' | 'cleared' | 'overdue';
+
+export interface CustomerCreditAccount {
+  id: string;
+  customerName: string;
+  phone: string;
+  email?: string;
+  companyOrOrg?: string;
+  creditLimit?: number;
+  totalCreditIssued: number;
+  totalRepaid: number;
+  currentBalance: number;
+  status: CreditAccountStatus;
+  lastActivityDate: string;
+  dueDate?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditLedgerEntry {
+  id: string;
+  creditNumber: string;
+  customerId: string;
+  customerName: string;
+  customerPhone?: string;
+  type: CreditEntryType;
+  amount: number;
+  balanceAfter: number;
+  paymentAccount?: ExpensePaymentAccount;
+  referenceNumber?: string;
+  itemsSummary?: string;
+  saleReceiptNumber?: string;
+  dueDate?: string;
+  date: string;
+  time: string;
+  timestamp: string;
+  operatorId: string;
+  operatorName: string;
+  notes?: string;
+}

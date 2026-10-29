@@ -75,6 +75,32 @@ service cloud.firestore {
       allow delete: if isValidId(expenseId);
     }
 
+    // Customer Credit Accounts Directory
+    match /customer_credits/{creditId} {
+      allow get: if isValidId(creditId);
+      allow list: if true;
+      allow create, update: if isValidId(creditId) &&
+        incoming().customerName is string && incoming().customerName.size() <= 200 &&
+        incoming().phone is string && incoming().phone.size() <= 64 &&
+        incoming().totalCreditIssued is number &&
+        incoming().totalRepaid is number &&
+        incoming().currentBalance is number;
+      allow delete: if isValidId(creditId);
+    }
+
+    // Customer Credit Ledger Entries (Issuance & Repayments)
+    match /credit_records/{recordId} {
+      allow get: if isValidId(recordId);
+      allow list: if true;
+      allow create, update: if isValidId(recordId) &&
+        incoming().creditNumber is string && incoming().creditNumber.size() <= 64 &&
+        incoming().customerName is string && incoming().customerName.size() <= 200 &&
+        incoming().type is string && incoming().type.size() <= 32 &&
+        incoming().amount is number &&
+        incoming().balanceAfter is number;
+      allow delete: if isValidId(recordId);
+    }
+
     // Operator Profile (Rahel Fira)
     match /users/{userId} {
       allow get: if isValidId(userId);

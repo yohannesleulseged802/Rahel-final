@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   User as UserIcon,
   Barcode,
-  Wallet
+  Wallet,
+  BookOpen
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { TabType } from '../types';
@@ -56,6 +57,12 @@ export const MobileBottomNav: React.FC = () => {
       label: 'Other Expenses', 
       desc: 'Fuel, Rent & Salary via Telebirr & Banks', 
       icon: Wallet 
+    },
+    { 
+      id: 'credit_ledger' as TabType, 
+      label: 'Credit Ledger', 
+      desc: 'Customer credit debt, receivables & repayments', 
+      icon: BookOpen 
     },
     { 
       id: 'reports' as TabType, 

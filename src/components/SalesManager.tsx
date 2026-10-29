@@ -23,10 +23,15 @@ import {
   Printer,
   Leaf,
   FileDown,
-  X
+  X,
+  BookOpen,
+  ExternalLink,
+  UserCheck,
+  Phone,
+  ChevronDown
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
-import { Product, PaymentMethod, SaleTransaction, PAYMENT_METHOD_NAMES } from '../types';
+import { Product, PaymentMethod, SaleTransaction, PAYMENT_METHOD_NAMES, CustomerCreditAccount } from '../types';
 import { generateSaleReceiptPDF } from '../utils/pdfExport';
 import { 
   getLocalDateString, 
@@ -46,7 +51,18 @@ interface SaleLineItem {
 }
 
 export const SalesManager: React.FC = () => {
-  const { products, recordSale, updateSaleReceiptStatus, transactions, settings, showToast, openScanner, scannedSaleEvent } = usePOS();
+  const { 
+    products, 
+    recordSale, 
+    updateSaleReceiptStatus, 
+    transactions, 
+    settings, 
+    showToast, 
+    openScanner, 
+    scannedSaleEvent,
+    creditAccounts,
+    setActiveTab
+  } = usePOS();
   const lastHandledScanRef = useRef<number>(0);
 
   // Search & Selector State
@@ -56,6 +72,7 @@ export const SalesManager: React.FC = () => {
 
   // Metadata with accurate local date and live clock time
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [saleDate, setSaleDate] = useState(() => getLocalDateString());
@@ -63,6 +80,54 @@ export const SalesManager: React.FC = () => {
   const [useCustomDateTime, setUseCustomDateTime] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close customer picker dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
+        setIsCustomerPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Match existing Credit Ledger account by name or phone
+  const matchedCreditAccount = useMemo(() => {
+    if (!customerName.trim() || !Array.isArray(creditAccounts)) return null;
+    const clean = customerName.trim().toLowerCase();
+    return creditAccounts.find(a => 
+      a.customerName.toLowerCase() === clean || 
+      (a.phone && a.phone.toLowerCase() === clean)
+    ) || null;
+  }, [customerName, creditAccounts]);
+
+  // Matching credit customers for search/autocomplete dropdown
+  const matchingCreditCustomers = useMemo(() => {
+    if (!Array.isArray(creditAccounts)) return [];
+    const q = customerName.trim().toLowerCase();
+    if (!q) return creditAccounts.slice(0, 8);
+    return creditAccounts.filter(a => 
+      a.customerName.toLowerCase().includes(q) ||
+      (a.phone && a.phone.toLowerCase().includes(q)) ||
+      (a.companyOrOrg && a.companyOrOrg.toLowerCase().includes(q))
+    ).slice(0, 8);
+  }, [customerName, creditAccounts]);
+
+  // Select a customer directly from the Credit Ledger list
+  const handleSelectCreditCustomer = (acc: CustomerCreditAccount) => {
+    setCustomerName(acc.customerName);
+    if (acc.phone && acc.phone !== 'Not specified') {
+      setCustomerPhone(acc.phone);
+    }
+    if (acc.email) {
+      setCustomerEmail(acc.email);
+    }
+    setIsCustomerPickerOpen(false);
+    showToast(`Linked customer "${acc.customerName}" from Credit Ledger.`);
+  };
 
   // Quick reset to live current date and time
   const handleSetCurrentDateTime = () => {
@@ -195,8 +260,10 @@ export const SalesManager: React.FC = () => {
   const handleClearSale = () => {
     setSaleItems([]);
     setCustomerName('');
+    setCustomerPhone('');
     setCustomerEmail('');
     setNotes('');
+    setIsCustomerPickerOpen(false);
     setNoReceipt(settings.allowNoReceiptOption !== false && settings.defaultReceiptOption === 'no_receipt');
   };
 
@@ -230,6 +297,13 @@ export const SalesManager: React.FC = () => {
       return;
     }
 
+    // When payment method is Store Credit, Customer Name is strictly required
+    if (paymentMethod === 'store_credit' && !customerName.trim()) {
+      showToast('Customer name is required when using Store Credit to record in the Credit Ledger.');
+      setIsCustomerPickerOpen(true);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -252,6 +326,7 @@ export const SalesManager: React.FC = () => {
       const createdTx = recordSale({
         items: itemsPayload,
         customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.trim() || undefined,
         customerEmail: customerEmail.trim() || undefined,
         notes: notes.trim() || undefined,
         paymentMethod,
@@ -543,20 +618,209 @@ export const SalesManager: React.FC = () => {
 
             {/* Customer & Settlement Metadata */}
             <div className="mt-5 pt-4 border-t border-neutral-800 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-neutral-400 mb-1">
-                  Customer / Account Name (Optional)
-                </label>
+              {/* Customer / Account Name - Required and linked to Credit Ledger when paymentMethod === 'store_credit' */}
+              <div ref={customerDropdownRef} className="relative">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    <span className={paymentMethod === 'store_credit' ? 'text-amber-300 font-bold' : 'text-neutral-400'}>
+                      Customer / Account Name
+                    </span>
+                    {paymentMethod === 'store_credit' ? (
+                      <span className="text-rose-400 font-bold text-[11px]">* (Required for Store Credit)</span>
+                    ) : (
+                      <span className="text-neutral-500 text-[11px]">(Optional)</span>
+                    )}
+                  </label>
+
+                  {/* Quick button to pick existing customer from Credit Ledger */}
+                  {Array.isArray(creditAccounts) && creditAccounts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomerPickerOpen(prev => !prev)}
+                      className={`text-[10px] font-mono flex items-center gap-1 hover:underline cursor-pointer transition-colors ${
+                        paymentMethod === 'store_credit' 
+                          ? 'text-amber-400 font-bold hover:text-amber-300' 
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                      title="Select existing debtor from Credit Ledger"
+                    >
+                      <BookOpen className="w-3 h-3 text-amber-400" />
+                      <span>Credit Ledger ({creditAccounts.length})</span>
+                      <ChevronDown className={`w-2.5 h-2.5 transition-transform ${isCustomerPickerOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  )}
+                </div>
+
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-500" />
+                  <User className={`absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${
+                    paymentMethod === 'store_credit' ? 'text-amber-400' : 'text-neutral-500'
+                  }`} />
                   <input
                     type="text"
-                    placeholder="e.g. Acme Design Bureau / Walk-in"
+                    required={paymentMethod === 'store_credit'}
+                    placeholder={
+                      paymentMethod === 'store_credit'
+                        ? "Enter or choose customer for Credit Ledger..."
+                        : "e.g. Acme Design Bureau / Walk-in"
+                    }
                     value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-amber-500/50"
+                    onFocus={() => {
+                      if (creditAccounts && creditAccounts.length > 0) {
+                        setIsCustomerPickerOpen(true);
+                      }
+                    }}
+                    onChange={(e) => {
+                      setCustomerName(e.target.value);
+                      setIsCustomerPickerOpen(true);
+                    }}
+                    className={`w-full pl-9 pr-8 py-2 bg-neutral-950 border rounded-xl text-xs text-neutral-100 placeholder:text-neutral-600 focus:outline-none transition-colors ${
+                      paymentMethod === 'store_credit' && !customerName.trim()
+                        ? 'border-rose-500/80 focus:border-rose-400 shadow-xs shadow-rose-500/10'
+                        : paymentMethod === 'store_credit'
+                        ? 'border-amber-500/60 focus:border-amber-400'
+                        : 'border-neutral-800 focus:border-amber-500/50'
+                    }`}
                   />
+                  {customerName && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerName('');
+                        setCustomerPhone('');
+                        setIsCustomerPickerOpen(false);
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 p-0.5 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
+
+                {/* Dropdown list of matching customers from Credit Ledger Tab */}
+                {isCustomerPickerOpen && Array.isArray(creditAccounts) && creditAccounts.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 z-30 mt-1 max-h-56 overflow-y-auto bg-neutral-900 border border-amber-500/40 rounded-xl shadow-2xl p-1.5 space-y-1">
+                    <div className="px-2 py-1 text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between border-b border-neutral-800 pb-1">
+                      <span className="flex items-center gap-1">
+                        <BookOpen className="w-3 h-3 text-amber-400" />
+                        Select Debtor from Credit Ledger
+                      </span>
+                      <span className="font-mono text-neutral-400">{creditAccounts.length} accounts</span>
+                    </div>
+                    {matchingCreditCustomers.length === 0 ? (
+                      <div className="p-3 text-center text-xs text-neutral-400">
+                        No debtor matching "{customerName}". A new credit profile will be created.
+                      </div>
+                    ) : (
+                      matchingCreditCustomers.map((acc) => (
+                        <button
+                          key={acc.id}
+                          type="button"
+                          onClick={() => handleSelectCreditCustomer(acc)}
+                          className="w-full p-2 text-left rounded-lg hover:bg-neutral-800 transition-colors flex items-center justify-between gap-2 group cursor-pointer text-xs"
+                        >
+                          <div>
+                            <div className="font-semibold text-neutral-100 group-hover:text-amber-300 flex items-center gap-1.5">
+                              <span>{acc.customerName}</span>
+                              {acc.companyOrOrg && (
+                                <span className="text-[10px] text-neutral-400 font-normal">
+                                  ({acc.companyOrOrg})
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-neutral-500 font-mono flex items-center gap-1 mt-0.5">
+                              <Phone className="w-2.5 h-2.5" />
+                              <span>{acc.phone || 'No phone'}</span>
+                            </div>
+                          </div>
+                          <div className="text-right font-mono">
+                            <span className={`block text-[11px] font-bold ${
+                              acc.currentBalance > 0 ? 'text-amber-400' : 'text-emerald-400'
+                            }`}>
+                              Bal: ETB {acc.currentBalance.toLocaleString()}
+                            </span>
+                            {acc.creditLimit ? (
+                              <span className="text-[9px] text-neutral-500">
+                                Limit: ETB {acc.creditLimit.toLocaleString()}
+                              </span>
+                            ) : null}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Validation and Linked Credit Account Info */}
+                {paymentMethod === 'store_credit' && (
+                  <>
+                    {!customerName.trim() ? (
+                      <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] flex items-center gap-1.5 animate-in fade-in duration-150">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                        <span>Customer name is <strong>required</strong> to charge on Store Credit.</span>
+                      </div>
+                    ) : matchedCreditAccount ? (
+                      <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-1.5 animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                            <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Linked to Credit Ledger: {matchedCreditAccount.customerName}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('credit_ledger')}
+                            className="text-[10px] text-amber-400 hover:text-amber-200 flex items-center gap-1 font-mono underline cursor-pointer"
+                            title="Open Credit Ledger tab to view full debt history"
+                          >
+                            <span>Ledger Tab</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-[11px] text-neutral-300 pt-1 border-t border-amber-500/20 font-mono">
+                          <div>
+                            <span className="text-neutral-500 block text-[9px] uppercase">Current Debt</span>
+                            <span className="font-bold text-amber-400">ETB {matchedCreditAccount.currentBalance.toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500 block text-[9px] uppercase">Credit Limit</span>
+                            <span>{matchedCreditAccount.creditLimit ? `ETB ${matchedCreditAccount.creditLimit.toLocaleString()}` : 'No Limit'}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500 block text-[9px] uppercase">New Debt Bal</span>
+                            <span className="font-bold text-neutral-100">ETB {(matchedCreditAccount.currentBalance + grandTotal).toLocaleString()}</span>
+                          </div>
+                        </div>
+                        {matchedCreditAccount.creditLimit && (matchedCreditAccount.currentBalance + grandTotal) > matchedCreditAccount.creditLimit && (
+                          <div className="text-[10px] text-rose-400 flex items-center gap-1 font-semibold pt-0.5">
+                            <AlertCircle className="w-3 h-3 shrink-0" />
+                            <span>Will exceed credit limit by ETB {((matchedCreditAccount.currentBalance + grandTotal) - matchedCreditAccount.creditLimit).toLocaleString()}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-2 p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 text-xs space-y-1.5 animate-in fade-in duration-150">
+                        <div className="flex items-center gap-1.5 text-neutral-200">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span>New Customer: <strong>{customerName.trim()}</strong> will be added to the Credit Ledger.</span>
+                        </div>
+                        <div className="pt-1 border-t border-neutral-800/80">
+                          <label className="block text-[10px] text-neutral-400 mb-0.5 font-mono">
+                            Phone Number for Credit Ledger (Recommended):
+                          </label>
+                          <div className="relative">
+                            <Phone className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-neutral-500" />
+                            <input
+                              type="text"
+                              placeholder="0911223344"
+                              value={customerPhone}
+                              onChange={(e) => setCustomerPhone(e.target.value)}
+                              className="w-full pl-7 pr-2.5 py-1 bg-neutral-950 border border-neutral-800 rounded-lg text-xs font-mono text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-amber-500/50"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
               <div>
@@ -722,15 +986,22 @@ export const SalesManager: React.FC = () => {
 
               <button
                 type="button"
-                disabled={saleItems.length === 0 || isSubmitting}
+                disabled={saleItems.length === 0 || isSubmitting || (paymentMethod === 'store_credit' && !customerName.trim())}
                 onClick={handleRecordSale}
                 className={`w-full sm:w-auto px-6 py-3 text-neutral-950 text-xs sm:text-sm font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  noReceipt
+                  paymentMethod === 'store_credit' && !customerName.trim()
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                    : noReceipt
                     ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 shadow-emerald-500/10'
                     : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-amber-500/10'
                 }`}
               >
-                {noReceipt ? (
+                {paymentMethod === 'store_credit' && !customerName.trim() ? (
+                  <>
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                    <span>Customer Name Required (Store Credit)</span>
+                  </>
+                ) : noReceipt ? (
                   <>
                     <Leaf className="w-4 h-4 text-neutral-950" />
                     <span>Complete Sale (No Receipt)</span>

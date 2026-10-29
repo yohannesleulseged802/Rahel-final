@@ -4,23 +4,36 @@ import {
   initializeFirestore, 
   doc, 
   getDocFromServer, 
-  Firestore 
+  Firestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Cloud Firestore using the provisioned database ID with ignoreUndefinedProperties enabled
+// Initialize Cloud Firestore with multi-tab persistent IndexedDB local cache and ignoreUndefinedProperties
 let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(
     app, 
-    { ignoreUndefinedProperties: true }, 
+    { 
+      ignoreUndefinedProperties: true,
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    }, 
     firebaseConfig.firestoreDatabaseId
   );
 } catch {
-  firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  try {
+    firestoreInstance = initializeFirestore(
+      app, 
+      { ignoreUndefinedProperties: true }, 
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
 }
 
 export const db = firestoreInstance;

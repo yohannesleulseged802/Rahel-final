@@ -16,7 +16,9 @@ import {
   TabType,
   ExpenseTransaction,
   ExpenseCategory,
-  ExpensePaymentAccount
+  ExpensePaymentAccount,
+  CustomerCreditAccount,
+  CreditLedgerEntry
 } from '../types';
 import { 
   INITIAL_USERS, 
@@ -61,6 +63,8 @@ interface POSContextType {
   transactions: SaleTransaction[];
   purchases: PurchaseTransaction[];
   expenses: ExpenseTransaction[];
+  creditAccounts: CustomerCreditAccount[];
+  creditEntries: CreditLedgerEntry[];
   settings: StoreSettings;
   activeReceipt: SaleTransaction | null;
   activeTab: TabType;
@@ -154,6 +158,7 @@ interface POSContextType {
       details?: string;
     }[];
     customerName?: string;
+    customerPhone?: string;
     customerEmail?: string;
     notes?: string;
     paymentMethod?: PaymentMethod;
@@ -202,6 +207,34 @@ interface POSContextType {
   }) => ExpenseTransaction;
   deleteExpense: (expenseId: string) => Promise<boolean>;
 
+  // Customer Credit Ledger Operations
+  recordCreditIssuance: (data: {
+    customerName: string;
+    phone?: string;
+    email?: string;
+    companyOrOrg?: string;
+    creditLimit?: number;
+    amount: number;
+    itemsSummary?: string;
+    dueDate?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+    saleReceiptNumber?: string;
+  }) => { account: CustomerCreditAccount; entry: CreditLedgerEntry };
+  recordCreditRepayment: (data: {
+    customerId: string;
+    amount: number;
+    paymentAccount: ExpensePaymentAccount;
+    referenceNumber?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+  }) => { account: CustomerCreditAccount; entry: CreditLedgerEntry };
+  updateCustomerCreditAccount: (customerId: string, updates: Partial<CustomerCreditAccount>) => void;
+  deleteCreditEntry: (entryId: string) => Promise<boolean>;
+  deleteCustomerCreditAccount: (customerId: string) => Promise<boolean>;
+
   // Cart operations
   addToCart: (item: Omit<CartItem, 'id'>) => void;
   removeFromCart: (itemId: string) => void;
@@ -244,9 +277,12 @@ interface POSContextType {
   performCashDrop: (amount: number, reason: string) => void;
   closeShiftDrawer: (actualCashCounted: number, notes?: string) => CashDrawerShift;
 
-  // Inventory
+  // Inventory & Auto-Sync
+  isSyncingProducts: boolean;
+  lastProductSyncTime: string | null;
+  syncAllProductsToCloud: (specificProducts?: Product[]) => Promise<void>;
   addProduct: (newProd: Omit<Product, 'id'>) => Product;
-  bulkImportProducts: (items: Omit<Product, 'id'>[], mode: 'append' | 'upsert' | 'replace') => BulkImportResult;
+  bulkImportProducts: (items: Omit<Product, 'id'>[], mode: 'append' | 'upsert' | 'replace') => Promise<BulkImportResult>;
   updateProduct: (updatedProd: Product) => void;
   deleteProduct: (productId: string) => void;
   adjustStock: (productId: string, delta: number) => void;
@@ -471,6 +507,116 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return [];
   });
 
+  // Customer Credit Accounts Directory
+  const [creditAccounts, setCreditAccounts] = useState<CustomerCreditAccount[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}customer_credits`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { /* fallback */ }
+    }
+    return [];
+  });
+
+  // Customer Credit Transactions & Repayments Ledger
+  const [creditEntries, setCreditEntries] = useState<CreditLedgerEntry[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}credit_records`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { /* fallback */ }
+    }
+    return [];
+  });
+
+  // Products Auto-Sync Engine (Runs every 10 seconds & immediately when items are added)
+  const productsRef = useRef<Product[]>(products);
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  const [isSyncingProducts, setIsSyncingProducts] = useState(false);
+  const [lastProductSyncTime, setLastProductSyncTime] = useState<string | null>(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}last_product_sync`);
+  });
+  const isProductSyncInProgressRef = useRef(false);
+
+  const syncAllProductsToCloud = async (specificProducts?: Product[]) => {
+    if (isProductSyncInProgressRef.current) return;
+    isProductSyncInProgressRef.current = true;
+    setIsSyncingProducts(true);
+
+    try {
+      // 1. Gather the most up-to-date local products
+      const localProducts = productsRef.current.length > 0 
+        ? productsRef.current 
+        : (() => {
+            try {
+              const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
+              return saved ? JSON.parse(saved) : [];
+            } catch { return []; }
+          })();
+
+      // 2. Build comprehensive items map to sync
+      const itemsMap = new Map<string, Product>();
+      localProducts.forEach((p: Product) => {
+        if (p && p.id && p.name) itemsMap.set(p.id, p);
+      });
+
+      if (specificProducts && specificProducts.length > 0) {
+        specificProducts.forEach(sp => {
+          if (sp && sp.id && sp.name) itemsMap.set(sp.id, sp);
+        });
+      }
+
+      const itemsToSync = Array.from(itemsMap.values());
+
+      if (itemsToSync.length > 0) {
+        // Chunk batch writes (up to 400 items per batch to stay well below 500 limit)
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < itemsToSync.length; i += CHUNK_SIZE) {
+          const chunk = itemsToSync.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach(prod => {
+            if (prod && prod.id && prod.name) {
+              const docRef = doc(db, 'products', prod.id);
+              batch.set(docRef, sanitizeForFirestore(prod), { merge: true });
+            }
+          });
+          await batch.commit();
+        }
+      }
+
+      const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastProductSyncTime(nowFormatted);
+      localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
+      setIsCloudConnected(true);
+    } catch (err) {
+      console.warn('Auto-sync products to Firestore caught:', err);
+    } finally {
+      setIsSyncingProducts(false);
+      isProductSyncInProgressRef.current = false;
+    }
+  };
+
+  // Enforce background auto-sync every 10 seconds & on initial mount
+  useEffect(() => {
+    const startupTimer = setTimeout(() => {
+      syncAllProductsToCloud();
+    }, 1200);
+
+    const interval = setInterval(() => {
+      syncAllProductsToCloud();
+    }, 10000); // Enforce auto-sync every 10 seconds
+
+    return () => {
+      clearTimeout(startupTimer);
+      clearInterval(interval);
+    };
+  }, []);
+
   // Inactivity tracking ref - strictly initialized from existing session timestamp to prevent extending timer on page reload
   const lastActivityRef = useRef<number>((() => {
     try {
@@ -579,14 +725,49 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const unsubProducts = onSnapshot(productsCol, (snapshot) => {
       setIsCloudConnected(true);
       if (snapshot.empty) {
-        setProducts([]);
-        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify([]));
+        // NON-DESTRUCTIVE: Never wipe local catalog if remote is empty!
+        // If local products exist, push them to Firestore so they are not lost upon reload.
+        const currentLocal = productsRef.current.length > 0
+          ? productsRef.current
+          : (() => {
+              try {
+                const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
+                return saved ? JSON.parse(saved) : [];
+              } catch { return []; }
+            })();
+
+        if (currentLocal && currentLocal.length > 0) {
+          syncAllProductsToCloud(currentLocal);
+        } else {
+          setProducts([]);
+          localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify([]));
+        }
       } else {
         const liveProducts = snapshot.docs
           .map(d => d.data() as Product)
           .filter(p => p && p.id && p.name);
-        setProducts(liveProducts);
-        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(liveProducts));
+
+        setProducts(prevLocal => {
+          const remoteMap = new Map<string, Product>();
+          liveProducts.forEach(p => remoteMap.set(p.id, p));
+
+          // Any local items entered by the user that haven't synced yet are strictly preserved
+          const unsyncedLocal = prevLocal.filter(p => !remoteMap.has(p.id));
+          const merged = [...liveProducts, ...unsyncedLocal];
+
+          try {
+            localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(merged));
+          } catch (e) {}
+
+          if (unsyncedLocal.length > 0) {
+            syncAllProductsToCloud(unsyncedLocal);
+          }
+          return merged;
+        });
+
+        const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setLastProductSyncTime(nowFormatted);
+        localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'products');
@@ -642,6 +823,42 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleFirestoreError(error, OperationType.GET, 'expenses');
     });
 
+    // 3.6. Live Customer Credit Accounts
+    const creditsCol = collection(db, 'customer_credits');
+    const unsubCredits = onSnapshot(creditsCol, (snapshot) => {
+      setIsCloudConnected(true);
+      if (snapshot.empty) {
+        setCreditAccounts([]);
+        localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify([]));
+      } else {
+        const liveAccounts = snapshot.docs
+          .map(d => d.data() as CustomerCreditAccount)
+          .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        setCreditAccounts(liveAccounts);
+        localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(liveAccounts));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'customer_credits');
+    });
+
+    // 3.7. Live Credit Ledger Entries
+    const creditEntriesCol = collection(db, 'credit_records');
+    const unsubCreditEntries = onSnapshot(creditEntriesCol, (snapshot) => {
+      setIsCloudConnected(true);
+      if (snapshot.empty) {
+        setCreditEntries([]);
+        localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify([]));
+      } else {
+        const liveEntries = snapshot.docs
+          .map(d => d.data() as CreditLedgerEntry)
+          .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        setCreditEntries(liveEntries);
+        localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(liveEntries));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'credit_records');
+    });
+
     // 4. Live Store Settings (Enforcing permanent ETB currency & master passcode)
     const settingsDocRef = doc(db, 'settings', 'store_config');
     const unsubSettings = onSnapshot(settingsDocRef, (snap) => {
@@ -684,6 +901,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubSales();
       unsubPurchases();
       unsubExpenses();
+      unsubCredits();
+      unsubCreditEntries();
       unsubSettings();
       unsubUsers();
     };
@@ -725,6 +944,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}expenses`, JSON.stringify(expenses));
   }, [expenses]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(creditAccounts));
+  }, [creditAccounts]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(creditEntries));
+  }, [creditEntries]);
 
   // Toast feedback helper
   const showToast = (msg: string) => {
@@ -1432,8 +1659,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     // Deduct stock for retail products sold
-    setProducts((prev) =>
-      prev.map((prod) => {
+    setProducts((prev) => {
+      const updated = prev.map((prod) => {
         const soldInCart = cart.filter(
           (c) => c.type === 'product' && c.productId === prod.id
         );
@@ -1446,8 +1673,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return updatedProd;
         }
         return prod;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
 
     // Update active shift drawer stats
     if (currentShift && currentShift.status === 'open') {
@@ -1477,6 +1708,23 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions((prev) => [newTx, ...prev]);
     setDoc(doc(db, 'sales', newTx.id), sanitizeForFirestore(newTx))
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'sales'));
+
+    // If sale was purchased on Store Credit, automatically record credit issuance in Credit Ledger
+    if (payment.method === 'store_credit') {
+      try {
+        const debtorName = customerName?.trim() || 'Store Credit Customer';
+        recordCreditIssuance({
+          customerName: debtorName,
+          email: customerEmail?.trim(),
+          amount: cartTotal,
+          itemsSummary: cart.map(c => `${c.quantity}x ${c.name}`).join(', '),
+          saleReceiptNumber: receiptNum,
+          notes: notes?.trim() || `Auto-recorded from Sale #${receiptNum}`,
+        });
+      } catch (err) {
+        console.error('Failed to auto-record credit issuance for store_credit sale:', err);
+      }
+    }
 
     // Clear cart (no receipt modal / print generated)
     setCart([]);
@@ -1564,6 +1812,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       details?: string;
     }[];
     customerName?: string;
+    customerPhone?: string;
     customerEmail?: string;
     notes?: string;
     paymentMethod?: PaymentMethod;
@@ -1578,6 +1827,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     if (!saleData.items || saleData.items.length === 0) {
       throw new Error('Sale must contain at least one item');
+    }
+
+    // When payment method is Store Credit, Customer Name is mandatory
+    if (saleData.paymentMethod === 'store_credit' && !saleData.customerName?.trim()) {
+      throw new Error('Customer name is required when using Store Credit to link with the Credit Ledger');
     }
 
     const refNum = `SL-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -1616,6 +1870,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cashierId: currentUser.id,
       cashierName: currentUser.name,
       customerName: saleData.customerName?.trim() || undefined,
+      customerPhone: saleData.customerPhone?.trim() || undefined,
       customerEmail: saleData.customerEmail?.trim() || undefined,
       items: cartItems,
       subtotal,
@@ -1636,8 +1891,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     // AUTOMATICALLY EDIT INVENTORY: Deduct stock for all items sold
-    setProducts((prev) =>
-      prev.map((prod) => {
+    setProducts((prev) => {
+      const updated = prev.map((prod) => {
         const soldMatch = cartItems.filter(
           (c) => (c.productId && c.productId === prod.id) || c.name.toLowerCase() === prod.name.toLowerCase()
         );
@@ -1653,13 +1908,37 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         }
         return prod;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
 
     // Save transaction to internal state & Firestore live database
     setTransactions((prev) => [newTx, ...prev]);
     setDoc(doc(db, 'sales', newTx.id), sanitizeForFirestore(newTx))
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'sales'));
+
+    // Automatically link with Credit Ledger if paid via Store Credit
+    if (saleData.paymentMethod === 'store_credit') {
+      try {
+        const debtorName = saleData.customerName!.trim();
+        recordCreditIssuance({
+          customerName: debtorName,
+          phone: saleData.customerPhone?.trim(),
+          email: saleData.customerEmail?.trim(),
+          amount: total,
+          itemsSummary: cartItems.map(c => `${c.quantity}x ${c.name}`).join(', '),
+          saleReceiptNumber: refNum,
+          notes: saleData.notes?.trim() || `Auto-recorded from Sale #${refNum}`,
+          date: saleData.date,
+          time: saleData.time,
+        });
+      } catch (err) {
+        console.error('Failed to auto-link store credit sale with Credit Ledger:', err);
+      }
+    }
 
     showToast(`Sale #${refNum} recorded (${isNoReceipt ? 'No receipt requested' : 'Receipt issued'}). Inventory deducted automatically.`);
     return newTx;
@@ -1796,6 +2075,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
         }
       });
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      syncAllProductsToCloud();
       return updated;
     });
 
@@ -1887,6 +2170,262 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'expenses');
       showToast('Failed to delete expense record.');
+      return false;
+    }
+  };
+
+  // Customer Credit Ledger Operations
+  const recordCreditIssuance = (data: {
+    customerName: string;
+    phone?: string;
+    email?: string;
+    companyOrOrg?: string;
+    creditLimit?: number;
+    amount: number;
+    itemsSummary?: string;
+    dueDate?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+    saleReceiptNumber?: string;
+  }): { account: CustomerCreditAccount; entry: CreditLedgerEntry } => {
+    if (!currentUser) {
+      throw new Error('Must be logged in to record credit transactions');
+    }
+    const cleanAmount = Math.max(0, Number(data.amount) || 0);
+    if (cleanAmount <= 0) {
+      throw new Error('Credit amount must be greater than zero');
+    }
+    const cleanName = data.customerName.trim();
+    if (!cleanName) {
+      throw new Error('Customer name is required');
+    }
+
+    const timestamp = resolveAccurateTimestamp(data.date, data.time);
+    const dateStr = data.date || new Date(timestamp).toISOString().split('T')[0];
+    const timeStr = data.time || new Date(timestamp).toTimeString().slice(0, 5);
+
+    const cleanPhone = (data.phone || '').trim();
+    const existingIndex = creditAccounts.findIndex(acc => 
+      acc.customerName.toLowerCase() === cleanName.toLowerCase() ||
+      (cleanPhone && cleanPhone !== 'Not specified' && acc.phone === cleanPhone)
+    );
+
+    let account: CustomerCreditAccount;
+    const nowIso = new Date().toISOString();
+
+    if (existingIndex > -1) {
+      const prev = creditAccounts[existingIndex];
+      const newTotalIssued = Number((prev.totalCreditIssued + cleanAmount).toFixed(2));
+      const newBalance = Number((prev.currentBalance + cleanAmount).toFixed(2));
+      account = {
+        ...prev,
+        phone: cleanPhone || prev.phone,
+        email: data.email?.trim() || prev.email,
+        companyOrOrg: data.companyOrOrg?.trim() || prev.companyOrOrg,
+        creditLimit: data.creditLimit !== undefined ? data.creditLimit : prev.creditLimit,
+        totalCreditIssued: newTotalIssued,
+        currentBalance: newBalance,
+        status: newBalance > 0 ? 'active' : 'cleared',
+        lastActivityDate: dateStr,
+        dueDate: data.dueDate?.trim() || prev.dueDate,
+        notes: data.notes?.trim() || prev.notes,
+        updatedAt: nowIso,
+      };
+    } else {
+      account = {
+        id: `cust-crd-${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        customerName: cleanName,
+        phone: cleanPhone || 'Not specified',
+        email: data.email?.trim() || undefined,
+        companyOrOrg: data.companyOrOrg?.trim() || undefined,
+        creditLimit: data.creditLimit || undefined,
+        totalCreditIssued: cleanAmount,
+        totalRepaid: 0,
+        currentBalance: cleanAmount,
+        status: 'active',
+        lastActivityDate: dateStr,
+        dueDate: data.dueDate?.trim() || undefined,
+        notes: data.notes?.trim() || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+    }
+
+    const creditNum = `CRD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const entry: CreditLedgerEntry = {
+      id: `crd-entry-${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      creditNumber: creditNum,
+      customerId: account.id,
+      customerName: account.customerName,
+      customerPhone: account.phone,
+      type: 'issue_credit',
+      amount: cleanAmount,
+      balanceAfter: account.currentBalance,
+      itemsSummary: data.itemsSummary?.trim() || undefined,
+      saleReceiptNumber: data.saleReceiptNumber?.trim() || undefined,
+      dueDate: data.dueDate?.trim() || undefined,
+      date: dateStr,
+      time: timeStr,
+      timestamp,
+      operatorId: currentUser.id,
+      operatorName: currentUser.name,
+      notes: data.notes?.trim() || undefined,
+    };
+
+    setDoc(doc(db, 'customer_credits', account.id), sanitizeForFirestore(account))
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'customer_credits'));
+    setDoc(doc(db, 'credit_records', entry.id), sanitizeForFirestore(entry))
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'credit_records'));
+
+    setCreditAccounts(prev => {
+      const idx = prev.findIndex(a => a.id === account.id);
+      const next = idx > -1 ? prev.map(a => a.id === account.id ? account : a) : [account, ...prev];
+      localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(next));
+      return next;
+    });
+
+    setCreditEntries(prev => {
+      const next = [entry, ...prev];
+      localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(next));
+      return next;
+    });
+
+    showToast(`Issued ${cleanAmount.toLocaleString()} ETB credit to ${account.customerName} (Bal: ${account.currentBalance.toLocaleString()} ETB)`);
+    return { account, entry };
+  };
+
+  const recordCreditRepayment = (data: {
+    customerId: string;
+    amount: number;
+    paymentAccount: ExpensePaymentAccount;
+    referenceNumber?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+  }): { account: CustomerCreditAccount; entry: CreditLedgerEntry } => {
+    if (!currentUser) {
+      throw new Error('Must be logged in to record repayments');
+    }
+    const cleanAmount = Math.max(0, Number(data.amount) || 0);
+    if (cleanAmount <= 0) {
+      throw new Error('Payment amount must be greater than zero');
+    }
+    const existing = creditAccounts.find(a => a.id === data.customerId);
+    if (!existing) {
+      throw new Error('Customer credit account not found');
+    }
+
+    const timestamp = resolveAccurateTimestamp(data.date, data.time);
+    const dateStr = data.date || new Date(timestamp).toISOString().split('T')[0];
+    const timeStr = data.time || new Date(timestamp).toTimeString().slice(0, 5);
+
+    const newTotalRepaid = Number((existing.totalRepaid + cleanAmount).toFixed(2));
+    const newBalance = Number(Math.max(0, existing.currentBalance - cleanAmount).toFixed(2));
+    const nowIso = new Date().toISOString();
+
+    const account: CustomerCreditAccount = {
+      ...existing,
+      totalRepaid: newTotalRepaid,
+      currentBalance: newBalance,
+      status: newBalance <= 0 ? 'cleared' : 'active',
+      lastActivityDate: dateStr,
+      updatedAt: nowIso,
+    };
+
+    const repNum = `REP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const entry: CreditLedgerEntry = {
+      id: `crd-entry-${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      creditNumber: repNum,
+      customerId: account.id,
+      customerName: account.customerName,
+      customerPhone: account.phone,
+      type: 'repayment',
+      amount: cleanAmount,
+      balanceAfter: newBalance,
+      paymentAccount: data.paymentAccount,
+      referenceNumber: data.referenceNumber?.trim() || undefined,
+      date: dateStr,
+      time: timeStr,
+      timestamp,
+      operatorId: currentUser.id,
+      operatorName: currentUser.name,
+      notes: data.notes?.trim() || undefined,
+    };
+
+    setDoc(doc(db, 'customer_credits', account.id), sanitizeForFirestore(account))
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'customer_credits'));
+    setDoc(doc(db, 'credit_records', entry.id), sanitizeForFirestore(entry))
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'credit_records'));
+
+    setCreditAccounts(prev => {
+      const next = prev.map(a => a.id === account.id ? account : a);
+      localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(next));
+      return next;
+    });
+
+    setCreditEntries(prev => {
+      const next = [entry, ...prev];
+      localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(next));
+      return next;
+    });
+
+    showToast(`Recorded repayment of ${cleanAmount.toLocaleString()} ETB via ${data.paymentAccount} from ${account.customerName} (Bal: ${newBalance.toLocaleString()} ETB)`);
+    return { account, entry };
+  };
+
+  const updateCustomerCreditAccount = (customerId: string, updates: Partial<CustomerCreditAccount>) => {
+    const existing = creditAccounts.find(a => a.id === customerId);
+    if (!existing) return;
+
+    const updated: CustomerCreditAccount = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setDoc(doc(db, 'customer_credits', updated.id), sanitizeForFirestore(updated), { merge: true })
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'customer_credits'));
+
+    setCreditAccounts(prev => {
+      const next = prev.map(a => a.id === customerId ? updated : a);
+      localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(next));
+      return next;
+    });
+
+    showToast(`Updated customer account for ${updated.customerName}.`);
+  };
+
+  const deleteCreditEntry = async (entryId: string): Promise<boolean> => {
+    try {
+      await deleteDoc(doc(db, 'credit_records', entryId));
+      setCreditEntries(prev => {
+        const next = prev.filter(e => e.id !== entryId);
+        localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(next));
+        return next;
+      });
+      showToast('Credit entry removed.');
+      return true;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'credit_records');
+      showToast('Failed to delete credit entry.');
+      return false;
+    }
+  };
+
+  const deleteCustomerCreditAccount = async (customerId: string): Promise<boolean> => {
+    try {
+      await deleteDoc(doc(db, 'customer_credits', customerId));
+      setCreditAccounts(prev => {
+        const next = prev.filter(a => a.id !== customerId);
+        localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(next));
+        return next;
+      });
+      showToast('Customer credit profile removed.');
+      return true;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'customer_credits');
+      showToast('Failed to remove credit profile.');
       return false;
     }
   };
@@ -1990,6 +2529,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prod: Product = {
       ...newProd,
       id: `prod-item-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      name: (newProd.name || '').trim(),
+      sku: (newProd.sku || '').trim() || `ST-${Date.now().toString().slice(-4)}`,
+      barcode: (newProd.barcode || '').trim() || `${Math.floor(100000000000 + Math.random() * 900000000000)}`,
+      category: newProd.category || 'Notebooks & Paper',
+      price: Number(newProd.price) >= 0 ? Number(newProd.price) : 0,
+      costPrice: Number(newProd.costPrice) >= 0 ? Number(newProd.costPrice) : 0,
+      stock: Number(newProd.stock) >= 0 ? Number(newProd.stock) : 0,
+      minStockAlert: Number(newProd.minStockAlert) >= 0 ? Number(newProd.minStockAlert) : 5,
+      unit: newProd.unit || 'each',
+      description: newProd.description || '',
     };
     setProducts(prev => {
       const filtered = prev.filter(p => p.id !== prod.id);
@@ -1999,121 +2548,228 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-    setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(prod))
+    // Immediately write to Firestore & enforce instant sync
+    setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(prod), { merge: true })
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+    syncAllProductsToCloud([prod]);
     showToast(`Added "${prod.name}" to inventory.`);
     return prod;
   };
 
-  const bulkImportProducts = (
+  const bulkImportProducts = async (
     items: Omit<Product, 'id'>[],
     mode: 'append' | 'upsert' | 'replace'
-  ): BulkImportResult => {
+  ): Promise<BulkImportResult> => {
     let added = 0;
     let updated = 0;
     let skipped = 0;
 
+    if (!items || items.length === 0) {
+      return { added: 0, updated: 0, skipped: 0 };
+    }
+
+    // 1. Sanitize every incoming item with strict defaults matching firestore.rules
+    const sanitizedIncoming = items.map((item, idx) => {
+      const skuVal = (item.sku || '').trim() || `ST-${Date.now().toString().slice(-4)}-${idx}`;
+      const barcodeVal = (item.barcode || '').trim() || `${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+      const priceVal = Number(item.price) >= 0 ? Number(item.price) : 0;
+      const costVal = Number(item.costPrice) >= 0 ? Number(item.costPrice) : Number((priceVal * 0.5).toFixed(2));
+      const stockVal = Number(item.stock) >= 0 ? Number(item.stock) : 0;
+      const minStockVal = Number(item.minStockAlert) >= 0 ? Number(item.minStockAlert) : 5;
+
+      return {
+        name: (item.name || 'Stationery Item').trim().slice(0, 200),
+        sku: skuVal.slice(0, 64),
+        barcode: barcodeVal,
+        category: (item.category || 'Notebooks & Paper').trim(),
+        price: Number(priceVal.toFixed(2)),
+        costPrice: Number(costVal.toFixed(2)),
+        stock: Math.round(stockVal),
+        minStockAlert: Math.round(minStockVal),
+        unit: item.unit || 'each',
+        description: item.description || '',
+      };
+    });
+
     if (mode === 'replace') {
-      const newCatalog: Product[] = items.map((it, idx) => ({
+      const newCatalog: Product[] = sanitizedIncoming.map((it, idx) => ({
         ...it,
-        id: `prod-imp-${Date.now()}-${idx}`,
+        id: `prod-imp-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       }));
-      setProducts(newCatalog);
-      // Batch write to Firestore
+
+      // Immediately update local state, ref, and localStorage
+      productsRef.current = newCatalog;
       try {
-        const batch = writeBatch(db);
-        newCatalog.forEach(p => batch.set(doc(db, 'products', p.id), sanitizeForFirestore(p)));
-        batch.commit().catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(newCatalog));
       } catch (e) {}
+      setProducts(newCatalog);
+
+      // In Firestore: delete old products and write new catalog in batches of 400
+      try {
+        const oldDocsSnap = await getDocs(collection(db, 'products'));
+        const newCatalogIds = new Set(newCatalog.map(p => p.id));
+        const docsToDelete = oldDocsSnap.docs.filter(d => !newCatalogIds.has(d.id));
+
+        // Delete old docs in chunks of 400
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < docsToDelete.length; i += CHUNK_SIZE) {
+          const chunk = docsToDelete.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+
+        // Set new catalog docs in chunks of 400
+        for (let i = 0; i < newCatalog.length; i += CHUNK_SIZE) {
+          const chunk = newCatalog.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach(p => {
+            const docRef = doc(db, 'products', p.id);
+            batch.set(docRef, sanitizeForFirestore(p), { merge: true });
+          });
+          await batch.commit();
+        }
+
+        const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setLastProductSyncTime(nowFormatted);
+        localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'products');
+      }
+
       added = newCatalog.length;
       showToast(`Catalog replaced with ${added} items from Excel.`);
       return { added, updated, skipped };
     }
 
-    setProducts((prev) => {
-      const currentList = [...prev];
-      const batch = writeBatch(db);
+    // Upsert or Append mode
+    const currentList = [...(productsRef.current.length > 0 ? productsRef.current : products)];
+    const docsToWrite: Product[] = [];
 
-      items.forEach((item, idx) => {
-        // Find matching item by SKU or Barcode
-        const existingIndex = currentList.findIndex(
-          p => (item.sku && p.sku.trim().toLowerCase() === item.sku.trim().toLowerCase()) || 
-               (item.barcode && p.barcode && p.barcode.trim() === item.barcode.trim())
-        );
+    sanitizedIncoming.forEach((item, idx) => {
+      // Find matching item by SKU or Barcode
+      const existingIndex = currentList.findIndex(
+        p => (item.sku && p.sku && p.sku.trim().toLowerCase() === item.sku.toLowerCase()) || 
+             (item.barcode && p.barcode && p.barcode.trim() === item.barcode)
+      );
 
-        if (existingIndex > -1) {
-          if (mode === 'upsert') {
-            const up: Product = {
-              ...currentList[existingIndex],
-              name: item.name || currentList[existingIndex].name,
-              category: item.category || currentList[existingIndex].category,
-              price: item.price !== undefined ? item.price : currentList[existingIndex].price,
-              costPrice: item.costPrice !== undefined ? item.costPrice : currentList[existingIndex].costPrice,
-              stock: item.stock !== undefined ? item.stock : currentList[existingIndex].stock,
-              minStockAlert: item.minStockAlert !== undefined ? item.minStockAlert : currentList[existingIndex].minStockAlert,
-              unit: item.unit || currentList[existingIndex].unit,
-              description: item.description || currentList[existingIndex].description,
-            };
-            currentList[existingIndex] = up;
-            batch.set(doc(db, 'products', up.id), sanitizeForFirestore(up), { merge: true });
-            updated++;
-          } else {
-            // Append mode: generate differentiated SKU if existing
-            const disambiguated: Product = {
-              ...item,
-              id: `prod-imp-${Date.now()}-${idx}`,
-              sku: item.sku ? `${item.sku}-DUP` : `ST-${Date.now().toString().slice(-4)}`,
-            };
-            currentList.unshift(disambiguated);
-            batch.set(doc(db, 'products', disambiguated.id), sanitizeForFirestore(disambiguated));
-            added++;
-          }
-        } else {
-          const newProduct: Product = {
-            ...item,
-            id: `prod-imp-${Date.now()}-${idx}`,
+      if (existingIndex > -1) {
+        if (mode === 'upsert') {
+          const existing = currentList[existingIndex];
+          const up: Product = {
+            ...existing,
+            name: item.name || existing.name,
+            sku: existing.sku || item.sku,
+            barcode: existing.barcode || item.barcode,
+            category: item.category || existing.category,
+            price: item.price !== undefined ? item.price : existing.price,
+            costPrice: item.costPrice !== undefined ? item.costPrice : existing.costPrice,
+            stock: item.stock !== undefined ? item.stock : existing.stock,
+            minStockAlert: item.minStockAlert !== undefined ? item.minStockAlert : existing.minStockAlert,
+            unit: item.unit || existing.unit,
+            description: item.description !== undefined ? item.description : existing.description,
           };
-          currentList.unshift(newProduct);
-          batch.set(doc(db, 'products', newProduct.id), sanitizeForFirestore(newProduct));
+          currentList[existingIndex] = up;
+          docsToWrite.push(up);
+          updated++;
+        } else {
+          // Append mode: generate differentiated SKU
+          const disambiguated: Product = {
+            ...item,
+            id: `prod-imp-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+            sku: `${item.sku}-DUP-${idx}`.slice(0, 64),
+          };
+          currentList.unshift(disambiguated);
+          docsToWrite.push(disambiguated);
           added++;
         }
-      });
-
-      batch.commit().catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
-      return currentList;
+      } else {
+        const newProduct: Product = {
+          ...item,
+          id: `prod-imp-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        };
+        currentList.unshift(newProduct);
+        docsToWrite.push(newProduct);
+        added++;
+      }
     });
+
+    // Synchronously update local catalog & localStorage
+    productsRef.current = currentList;
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(currentList));
+    } catch (e) {}
+    setProducts(currentList);
+
+    // Write all new/updated products to Firestore in batches of 400
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < docsToWrite.length; i += CHUNK_SIZE) {
+        const chunk = docsToWrite.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(prod => {
+          const docRef = doc(db, 'products', prod.id);
+          batch.set(docRef, sanitizeForFirestore(prod), { merge: true });
+        });
+        await batch.commit();
+      }
+
+      const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastProductSyncTime(nowFormatted);
+      localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
+      setIsCloudConnected(true);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'products');
+    }
 
     showToast(`Bulk Import complete: ${added} added, ${updated} updated.`);
     return { added, updated, skipped };
   };
 
   const updateProduct = (updatedProd: Product) => {
-    setProducts(prev => prev.map(p => (p.id === updatedProd.id ? updatedProd : p)));
+    setProducts(prev => {
+      const updated = prev.map(p => (p.id === updatedProd.id ? updatedProd : p));
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
     setDoc(doc(db, 'products', updatedProd.id), sanitizeForFirestore(updatedProd), { merge: true })
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+    syncAllProductsToCloud([updatedProd]);
     showToast(`Updated product ${updatedProd.name}.`);
   };
 
   const deleteProduct = (productId: string) => {
-    setProducts(prev => prev.filter(p => p.id !== productId));
+    setProducts(prev => {
+      const updated = prev.filter(p => p.id !== productId);
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
     deleteDoc(doc(db, 'products', productId))
       .catch(e => handleFirestoreError(e, OperationType.DELETE, 'products'));
     showToast('Product removed from catalog.');
   };
 
   const adjustStock = (productId: string, delta: number) => {
-    setProducts(prev =>
-      prev.map(p => {
+    setProducts(prev => {
+      const updated = prev.map(p => {
         if (p.id === productId) {
           const newStock = Math.max(0, p.stock + delta);
-          const updated = { ...p, stock: newStock };
-          setDoc(doc(db, 'products', productId), sanitizeForFirestore(updated), { merge: true })
+          const item = { ...p, stock: newStock };
+          setDoc(doc(db, 'products', productId), sanitizeForFirestore(item), { merge: true })
             .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
-          return updated;
+          return item;
         }
         return p;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
     showToast(`Stock updated (${delta > 0 ? `+${delta}` : delta}) across devices.`);
   };
 
@@ -2388,6 +3044,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         transactions,
         purchases,
         expenses,
+        creditAccounts,
+        creditEntries,
         settings,
         activeReceipt,
         activeTab,
@@ -2459,6 +3117,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         recordPurchase,
         recordExpense,
         deleteExpense,
+        recordCreditIssuance,
+        recordCreditRepayment,
+        updateCustomerCreditAccount,
+        deleteCreditEntry,
+        deleteCustomerCreditAccount,
         recordServiceJob,
         setActiveReceipt,
 
@@ -2470,6 +3133,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         performCashDrop,
         closeShiftDrawer,
 
+        isSyncingProducts,
+        lastProductSyncTime,
+        syncAllProductsToCloud,
         addProduct,
         bulkImportProducts,
         updateProduct,

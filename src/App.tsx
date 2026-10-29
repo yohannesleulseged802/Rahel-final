@@ -12,6 +12,7 @@ import { PurchaseManager } from './components/PurchaseManager';
 import { ServicesDesk } from './components/ServicesDesk';
 import { InventoryManager } from './components/InventoryManager';
 import { OtherExpensesManager } from './components/OtherExpensesManager';
+import { CreditLedgerManager } from './components/CreditLedgerManager';
 import { ReportsDashboard } from './components/ReportsDashboard';
 import { LabelStudio } from './components/LabelStudio';
 import { SettingsView } from './components/SettingsView';
@@ -82,6 +83,10 @@ const MainLayout: React.FC = () => {
 
         {activeTab === 'expenses' && (
           <OtherExpensesManager />
+        )}
+
+        {activeTab === 'credit_ledger' && (
+          <CreditLedgerManager />
         )}
 
         {activeTab === 'labels' && (

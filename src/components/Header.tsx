@@ -19,7 +19,8 @@ import {
   AlertTriangle,
   X,
   Trash2,
-  Wallet
+  Wallet,
+  BookOpen
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { RahelLogo } from './RahelLogo';
@@ -54,6 +55,7 @@ export const Header: React.FC<HeaderProps> = () => {
     { id: 'inventory' as const, label: 'Inventory', fullLabel: 'Inventory Catalog & Stock Records', icon: Package },
     { id: 'services' as const, label: 'Services', fullLabel: 'Services Desk & Job Costing', icon: Printer },
     { id: 'expenses' as const, label: 'Other Expenses', fullLabel: 'Other Expenses (Fuel, Rent, Salary via Telebirr)', icon: Wallet },
+    { id: 'credit_ledger' as const, label: 'Credit Ledger', fullLabel: 'Customer Store Credit & Debt Ledger', icon: BookOpen },
     { id: 'reports' as const, label: 'Reports', fullLabel: 'Business Reports & PO Analysis', icon: BarChart3 },
     { id: 'labels' as const, label: 'Labels', fullLabel: 'Barcode & QR Label Studio', icon: QrCode },
     { id: 'settings' as const, label: 'Settings', fullLabel: 'Store & Terminal Settings', icon: SettingsIcon },

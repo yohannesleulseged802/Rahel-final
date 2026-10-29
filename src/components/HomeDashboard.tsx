@@ -18,7 +18,9 @@ import {
   Sparkles,
   Plus,
   Search,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  Wallet,
+  BookOpen
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { generateBrandedPDFReport } from '../utils/pdfExport';
@@ -29,6 +31,8 @@ export const HomeDashboard: React.FC = () => {
     products,
     transactions,
     purchases,
+    expenses,
+    creditAccounts,
     currentUser,
     setActiveTab,
     openScanner,
@@ -135,6 +139,13 @@ export const HomeDashboard: React.FC = () => {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
+    const safeExpenses = Array.isArray(expenses) ? expenses : [];
+    const totalOtherExpenses = safeExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    const safeCredits = Array.isArray(creditAccounts) ? creditAccounts : [];
+    const totalOutstandingDebt = safeCredits.reduce((sum, a) => sum + (Number(a.currentBalance) || 0), 0);
+    const activeDebtorsCount = safeCredits.filter(a => (Number(a.currentBalance) || 0) > 0).length;
+
     return {
       todayRevenue,
       todayCount: todayTransactions.length,
@@ -150,9 +161,12 @@ export const HomeDashboard: React.FC = () => {
       criticalItems,
       totalPurchaseSpend,
       serviceJobsCount,
-      topProducts
+      topProducts,
+      totalOtherExpenses,
+      totalOutstandingDebt,
+      activeDebtorsCount
     };
-  }, [products, transactions, purchases]);
+  }, [products, transactions, purchases, expenses, creditAccounts]);
 
   // Unified Recent Store Ledger (Sales & Purchases)
   const recentActivity = useMemo(() => {
@@ -277,6 +291,26 @@ export const HomeDashboard: React.FC = () => {
       badge: `${metrics.serviceJobsCount} jobs recorded`,
       icon: Printer,
       accent: 'from-neutral-800/80 to-neutral-900 border-neutral-800 hover:border-amber-500/40'
+    },
+    {
+      id: 'expenses' as const,
+      title: 'Other Expenses',
+      subtitle: 'Track Fuel, Rent & Salary payments with account tracking across Telebirr (Maria/Rahel) & Banks.',
+      metricLabel: 'Recorded Expenses',
+      metricValue: `ETB ${metrics.totalOtherExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      badge: `${expenses?.length || 0} expenses`,
+      icon: Wallet,
+      accent: 'from-neutral-800/80 to-neutral-900 border-neutral-800 hover:border-amber-500/40'
+    },
+    {
+      id: 'credit_ledger' as const,
+      title: 'Credit Ledger (ዕዳ ደብተር)',
+      subtitle: 'Track customer debt receivables, issue store credit, generate customer statements & record repayments.',
+      metricLabel: 'Receivables Outstanding',
+      metricValue: `ETB ${metrics.totalOutstandingDebt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      badge: `${metrics.activeDebtorsCount} active debtors`,
+      icon: BookOpen,
+      accent: 'from-amber-400/20 to-amber-500/5 border-amber-500/40'
     },
     {
       id: 'reports' as const,

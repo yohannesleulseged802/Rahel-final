@@ -138,6 +138,56 @@
         "notes": { "type": "string", "maxLength": 1000 }
       },
       "required": ["id", "expenseNumber", "category", "amount", "paidAccount", "paidTo", "date", "timestamp"]
+    },
+    "CustomerCredit": {
+      "title": "CustomerCredit",
+      "description": "Customer credit account with running balance and debt tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 200 },
+        "phone": { "type": "string", "maxLength": 64 },
+        "email": { "type": "string", "maxLength": 128 },
+        "companyOrOrg": { "type": "string", "maxLength": 200 },
+        "creditLimit": { "type": "number" },
+        "totalCreditIssued": { "type": "number" },
+        "totalRepaid": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "status": { "type": "string", "maxLength": 32 },
+        "lastActivityDate": { "type": "string", "maxLength": 64 },
+        "dueDate": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "customerName", "phone", "totalCreditIssued", "totalRepaid", "currentBalance", "status"]
+    },
+    "CreditRecord": {
+      "title": "CreditRecord",
+      "description": "Individual credit issuance or debt repayment ledger entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "creditNumber": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 200 },
+        "customerPhone": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "maxLength": 32 },
+        "amount": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "paymentAccount": { "type": "string", "maxLength": 128 },
+        "referenceNumber": { "type": "string", "maxLength": 128 },
+        "itemsSummary": { "type": "string", "maxLength": 500 },
+        "saleReceiptNumber": { "type": "string", "maxLength": 64 },
+        "dueDate": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 64 },
+        "time": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "operatorId": { "type": "string", "maxLength": 128 },
+        "operatorName": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "creditNumber", "customerId", "customerName", "type", "amount", "balanceAfter", "date", "timestamp"]
     }
   },
   "firestore": {
@@ -160,6 +210,14 @@
     "/expenses/{expenseId}": {
       "schema": "Expense",
       "description": "Operating expenses transactions for fuel, rent, salary paid via Telebirr or banks"
+    },
+    "/customer_credits/{creditId}": {
+      "schema": "CustomerCredit",
+      "description": "Customer credit accounts directory and running debt balance"
+    },
+    "/credit_records/{recordId}": {
+      "schema": "CreditRecord",
+      "description": "Customer credit issuance and debt repayment transactions ledger"
     },
     "/users/{userId}": {
       "schema": "User",

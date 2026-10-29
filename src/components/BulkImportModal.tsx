@@ -41,6 +41,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Parsed Items
   const [parsedRows, setParsedRows] = useState<ParsedImportItem[]>([]);
@@ -253,7 +254,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
   const errorsCount = parsedRows.filter(r => r.status === 'error').length;
   const matchesCount = parsedRows.filter(r => r.isExistingMatch).length;
 
-  const handleCommitImport = () => {
+  const handleCommitImport = async () => {
     const validItemsToImport = parsedRows
       .filter(r => r.isValid)
       .map(r => ({
@@ -274,8 +275,17 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       return;
     }
 
-    const res = bulkImportProducts(validItemsToImport, importMode);
-    setImportResult(res);
+    setIsImporting(true);
+    setErrorMessage(null);
+    try {
+      const res = await bulkImportProducts(validItemsToImport, importMode);
+      setImportResult(res);
+    } catch (err: any) {
+      console.error('Bulk import error:', err);
+      setErrorMessage(err.message || 'Failed to import products to database.');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleReset = () => {
@@ -856,14 +866,23 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
             {!importResult && parsedRows.length > 0 && (
               <button
                 onClick={handleCommitImport}
-                disabled={validCount === 0}
+                disabled={validCount === 0 || isImporting}
                 className="px-5 py-2 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-bold text-xs rounded-lg flex items-center gap-2 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>
-                  Import {validCount} Items ({importMode.toUpperCase()})
-                </span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                {isImporting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-neutral-950" />
+                    <span>Syncing &amp; Saving to Cloud Database...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>
+                      Import {validCount} Items ({importMode.toUpperCase()})
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </>
+                )}
               </button>
             )}
           </div>
