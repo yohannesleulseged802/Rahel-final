@@ -53,7 +53,7 @@ export const ReportsDashboard: React.FC = () => {
   const monthlyData = useMemo(() => {
     const data = months.map((monthName, idx) => {
       const monthTxs = transactions.filter((tx) => {
-        if (!tx || !tx.timestamp) return false;
+        if (!tx || !tx.timestamp || tx.status === 'refunded') return false;
         const d = new Date(tx.timestamp);
         return !isNaN(d.getTime()) && d.getFullYear() === selectedYear && d.getMonth() === idx;
       });
@@ -197,6 +197,10 @@ export const ReportsDashboard: React.FC = () => {
 
   const servicesBreakdown = useMemo(() => {
     const serviceMap: Record<string, { count: number; revenue: number; cost: number }> = {
+      'End-of-Day Print Counter': { count: 0, revenue: 0, cost: 0 },
+      'Somale Printing': { count: 0, revenue: 0, cost: 0 },
+      'A1 Plan & Poster Printing': { count: 0, revenue: 0, cost: 0 },
+      'Blueprint Printing': { count: 0, revenue: 0, cost: 0 },
       'Document Printing & Copying': { count: 0, revenue: 0, cost: 0 },
       'Document Finishing & Binding': { count: 0, revenue: 0, cost: 0 },
       'Protective Lamination': { count: 0, revenue: 0, cost: 0 },
@@ -207,13 +211,18 @@ export const ReportsDashboard: React.FC = () => {
     };
 
     transactions.forEach((tx) => {
+      if (!tx || tx.status === 'refunded') return;
       const d = new Date(tx.timestamp);
       if (d.getFullYear() !== selectedYear) return;
 
       tx.items.forEach((it) => {
         if (it.type === 'service') {
           let cat = 'Document Printing & Copying';
-          if (it.serviceType === 'binding') cat = 'Document Finishing & Binding';
+          if (it.serviceType === 'print_counter') cat = 'End-of-Day Print Counter';
+          else if (it.serviceType === 'somale_print') cat = 'Somale Printing';
+          else if (it.serviceType === 'a1_print') cat = 'A1 Plan & Poster Printing';
+          else if (it.serviceType === 'blueprint_print') cat = 'Blueprint Printing';
+          else if (it.serviceType === 'binding') cat = 'Document Finishing & Binding';
           else if (it.serviceType === 'lamination') cat = 'Protective Lamination';
           else if (it.serviceType === 'scanning') cat = 'Scanning & Digital Archival';
           else if (it.serviceType === 'custom_stamp') cat = 'Custom Rubber Stamps';
@@ -251,6 +260,7 @@ export const ReportsDashboard: React.FC = () => {
     const map: Record<string, { name: string; category: string; units: number; revenue: number }> = {};
 
     transactions.forEach((tx) => {
+      if (!tx || tx.status === 'refunded') return;
       const d = new Date(tx.timestamp);
       if (d.getFullYear() !== selectedYear) return;
 
@@ -272,6 +282,7 @@ export const ReportsDashboard: React.FC = () => {
     const map: Record<string, { name: string; txCount: number; revenue: number; cashTotal: number; cardTotal: number; discounts: number }> = {};
 
     transactions.forEach((tx) => {
+      if (!tx || tx.status === 'refunded') return;
       const d = new Date(tx.timestamp);
       if (d.getFullYear() !== selectedYear) return;
 

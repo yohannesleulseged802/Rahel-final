@@ -68,6 +68,10 @@ export interface BulkImportResult {
 
 export type ServiceType = 
   | 'print_copy'
+  | 'somale_print'
+  | 'a1_print'
+  | 'blueprint_print'
+  | 'print_counter'
   | 'binding'
   | 'lamination'
   | 'scanning'
@@ -156,6 +160,9 @@ export interface SaleTransaction {
   grossProfit: number;
   payment: PaymentDetails;
   status: 'completed' | 'refunded';
+  reversedAt?: string;
+  reversedBy?: string;
+  reversalReason?: string;
   shiftId: string;
   notes?: string;
   noReceipt?: boolean;

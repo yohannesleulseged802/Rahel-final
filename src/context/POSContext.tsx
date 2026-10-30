@@ -26,7 +26,7 @@ import {
   INITIAL_SETTINGS, 
   INITIAL_OPEN_SHIFT 
 } from '../data/initialData';
-import { db, testConnection, handleFirestoreError, OperationType, sanitizeForFirestore } from '../firebase';
+import { db, testConnection, handleFirestoreError, OperationType, sanitizeForFirestore, isQuotaExhaustedError } from '../firebase';
 import { 
   collection, 
   onSnapshot, 
@@ -73,6 +73,7 @@ interface POSContextType {
 
   // Cloud Database Sync State
   isCloudConnected: boolean;
+  isCloudQuotaExceeded: boolean;
 
   // Barcode & QR Scanner State
   isScannerOpen: boolean;
@@ -256,6 +257,7 @@ interface POSContextType {
     noReceipt?: boolean
   ) => SaleTransaction;
   updateSaleReceiptStatus: (saleId: string, noReceipt: boolean) => void;
+  reverseSale: (saleId: string, reason?: string, permanentDelete?: boolean) => Promise<{ success: boolean; error?: string }>;
   recordServiceJob: (job: {
     name: string;
     category?: string;
@@ -264,6 +266,10 @@ interface POSContextType {
     cost: number;
     customerName?: string;
     notes?: string;
+    paymentMethod?: PaymentMethod;
+    date?: string;
+    time?: string;
+    timestamp?: string;
   }) => SaleTransaction;
   setActiveReceipt: (tx: SaleTransaction | null) => void;
 
@@ -280,7 +286,7 @@ interface POSContextType {
   // Inventory & Auto-Sync
   isSyncingProducts: boolean;
   lastProductSyncTime: string | null;
-  syncAllProductsToCloud: (specificProducts?: Product[]) => Promise<void>;
+  syncAllProductsToCloud: (specificProducts?: Product[], forceRetry?: boolean) => Promise<void>;
   addProduct: (newProd: Omit<Product, 'id'>) => Product;
   bulkImportProducts: (items: Omit<Product, 'id'>[], mode: 'append' | 'upsert' | 'replace') => Promise<BulkImportResult>;
   updateProduct: (updatedProd: Product) => void;
@@ -541,80 +547,141 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [lastProductSyncTime, setLastProductSyncTime] = useState<string | null>(() => {
     return localStorage.getItem(`${STORAGE_PREFIX}last_product_sync`);
   });
+  const isCloudQuotaExceededRef = useRef<boolean>((() => {
+    try {
+      return localStorage.getItem(`${STORAGE_PREFIX}cloud_quota_exceeded`) === 'true';
+    } catch {
+      return false;
+    }
+  })());
+
+  const [isCloudQuotaExceeded, setIsCloudQuotaExceeded] = useState<boolean>(() => {
+    return isCloudQuotaExceededRef.current;
+  });
+
+  const setQuotaExceeded = (exceeded: boolean) => {
+    isCloudQuotaExceededRef.current = exceeded;
+    setIsCloudQuotaExceeded(exceeded);
+    try {
+      if (exceeded) {
+        localStorage.setItem(`${STORAGE_PREFIX}cloud_quota_exceeded`, 'true');
+      } else {
+        localStorage.removeItem(`${STORAGE_PREFIX}cloud_quota_exceeded`);
+      }
+    } catch {}
+  };
+
   const isProductSyncInProgressRef = useRef(false);
 
-  const syncAllProductsToCloud = async (specificProducts?: Product[]) => {
-    if (isProductSyncInProgressRef.current) return;
-    isProductSyncInProgressRef.current = true;
-    setIsSyncingProducts(true);
-
+  // Track IDs of products that need to be synced to Firestore (delta tracking prevents quota exhaustion)
+  const pendingSyncIdsRef = useRef<Set<string>>((() => {
     try {
-      // 1. Gather the most up-to-date local products
-      const localProducts = productsRef.current.length > 0 
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}pending_sync_ids`);
+      return saved ? new Set<string>(JSON.parse(saved)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  })());
+
+  const markProductPendingSync = (productId: string) => {
+    pendingSyncIdsRef.current.add(productId);
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}pending_sync_ids`, JSON.stringify(Array.from(pendingSyncIdsRef.current)));
+    } catch {}
+  };
+
+  const markProductsSynced = (productIds: string[]) => {
+    productIds.forEach(id => pendingSyncIdsRef.current.delete(id));
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}pending_sync_ids`, JSON.stringify(Array.from(pendingSyncIdsRef.current)));
+    } catch {}
+  };
+
+  const syncAllProductsToCloud = async (specificProducts?: Product[], forceRetry: boolean = false) => {
+    if (isProductSyncInProgressRef.current) return;
+
+    // If quota was already marked exceeded, avoid repeating write requests unless user explicitly requests forceRetry
+    if (isCloudQuotaExceededRef.current && !forceRetry) {
+      if (specificProducts && specificProducts.length > 0) {
+        specificProducts.forEach(p => markProductPendingSync(p.id));
+      }
+      return;
+    }
+
+    // Determine which items actually need syncing
+    let itemsToSync: Product[] = [];
+
+    if (specificProducts && specificProducts.length > 0) {
+      itemsToSync = specificProducts.filter(p => p && p.id && p.name);
+    } else {
+      // 10-second periodic timer call: check if any dirty products are queued
+      if (pendingSyncIdsRef.current.size === 0) {
+        // Zero pending items: NO writes, zero quota consumed!
+        const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setLastProductSyncTime(nowFormatted);
+        localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
+        return;
+      }
+
+      const localProducts: Product[] = productsRef.current.length > 0 
         ? productsRef.current 
         : (() => {
             try {
               const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
-              return saved ? JSON.parse(saved) : [];
+              return saved ? (JSON.parse(saved) as Product[]) : [];
             } catch { return []; }
           })();
 
-      // 2. Build comprehensive items map to sync
-      const itemsMap = new Map<string, Product>();
-      localProducts.forEach((p: Product) => {
-        if (p && p.id && p.name) itemsMap.set(p.id, p);
-      });
+      itemsToSync = localProducts.filter((p: Product) => p && p.id && pendingSyncIdsRef.current.has(p.id));
+    }
 
-      if (specificProducts && specificProducts.length > 0) {
-        specificProducts.forEach(sp => {
-          if (sp && sp.id && sp.name) itemsMap.set(sp.id, sp);
+    if (itemsToSync.length === 0) return;
+
+    isProductSyncInProgressRef.current = true;
+    setIsSyncingProducts(true);
+
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < itemsToSync.length; i += CHUNK_SIZE) {
+        const chunk = itemsToSync.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(prod => {
+          if (prod && prod.id && prod.name) {
+            const docRef = doc(db, 'products', prod.id);
+            batch.set(docRef, sanitizeForFirestore(prod), { merge: true });
+          }
         });
+        await batch.commit();
       }
 
-      const itemsToSync = Array.from(itemsMap.values());
-
-      if (itemsToSync.length > 0) {
-        // Chunk batch writes (up to 400 items per batch to stay well below 500 limit)
-        const CHUNK_SIZE = 400;
-        for (let i = 0; i < itemsToSync.length; i += CHUNK_SIZE) {
-          const chunk = itemsToSync.slice(i, i + CHUNK_SIZE);
-          const batch = writeBatch(db);
-          chunk.forEach(prod => {
-            if (prod && prod.id && prod.name) {
-              const docRef = doc(db, 'products', prod.id);
-              batch.set(docRef, sanitizeForFirestore(prod), { merge: true });
-            }
-          });
-          await batch.commit();
-        }
-      }
+      // Successful write
+      markProductsSynced(itemsToSync.map(p => p.id));
+      setQuotaExceeded(false);
+      setIsCloudConnected(true);
 
       const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLastProductSyncTime(nowFormatted);
       localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
-      setIsCloudConnected(true);
-    } catch (err) {
-      console.warn('Auto-sync products to Firestore caught:', err);
+    } catch (err: any) {
+      if (isQuotaExhaustedError(err)) {
+        setQuotaExceeded(true);
+        console.warn('[Auto-Sync] Cloud daily write quota reached. Changes are safely preserved locally in browser storage.');
+      } else {
+        handleFirestoreError(err, OperationType.WRITE, 'products');
+      }
     } finally {
       setIsSyncingProducts(false);
       isProductSyncInProgressRef.current = false;
     }
   };
 
-  // Enforce background auto-sync every 10 seconds & on initial mount
+  // Enforce background auto-sync check every 10 seconds (delta-only: zero writes when no changes)
   useEffect(() => {
-    const startupTimer = setTimeout(() => {
-      syncAllProductsToCloud();
-    }, 1200);
-
     const interval = setInterval(() => {
       syncAllProductsToCloud();
-    }, 10000); // Enforce auto-sync every 10 seconds
+    }, 10000); // Checks for pending items every 10 seconds
 
-    return () => {
-      clearTimeout(startupTimer);
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
 
   // Inactivity tracking ref - strictly initialized from existing session timestamp to prevent extending timer on page reload
@@ -727,17 +794,20 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (snapshot.empty) {
         // NON-DESTRUCTIVE: Never wipe local catalog if remote is empty!
         // If local products exist, push them to Firestore so they are not lost upon reload.
-        const currentLocal = productsRef.current.length > 0
+        const currentLocal: Product[] = productsRef.current.length > 0
           ? productsRef.current
           : (() => {
               try {
                 const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
-                return saved ? JSON.parse(saved) : [];
+                return saved ? (JSON.parse(saved) as Product[]) : [];
               } catch { return []; }
             })();
 
         if (currentLocal && currentLocal.length > 0) {
-          syncAllProductsToCloud(currentLocal);
+          currentLocal.forEach((p: Product) => markProductPendingSync(p.id));
+          if (!isCloudQuotaExceededRef.current) {
+            syncAllProductsToCloud(currentLocal);
+          }
         } else {
           setProducts([]);
           localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify([]));
@@ -760,7 +830,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch (e) {}
 
           if (unsyncedLocal.length > 0) {
-            syncAllProductsToCloud(unsyncedLocal);
+            unsyncedLocal.forEach(p => markProductPendingSync(p.id));
+            if (!isCloudQuotaExceededRef.current) {
+              syncAllProductsToCloud(unsyncedLocal);
+            }
           }
           return merged;
         });
@@ -871,12 +944,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         setSettings(enforced);
         if (remote.currencySymbol !== 'ETB' || !remote.masterPasscode) {
-          setDoc(settingsDocRef, sanitizeForFirestore(enforced), { merge: true }).catch(() => {});
+          if (!isCloudQuotaExceededRef.current) {
+            setDoc(settingsDocRef, sanitizeForFirestore(enforced), { merge: true }).catch(() => {});
+          }
         }
       } else {
-        setDoc(settingsDocRef, sanitizeForFirestore(INITIAL_SETTINGS)).catch(e => 
-          handleFirestoreError(e, OperationType.WRITE, 'settings')
-        );
+        if (!isCloudQuotaExceededRef.current) {
+          setDoc(settingsDocRef, sanitizeForFirestore(INITIAL_SETTINGS)).catch(e => {
+            if (!isQuotaExhaustedError(e)) {
+              handleFirestoreError(e, OperationType.WRITE, 'settings');
+            }
+          });
+        }
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'settings');
@@ -1734,7 +1813,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newTx;
   };
 
-  // Direct internal service job recording
+  // Direct internal service job recording (supporting Cash, Telebirr, CBE, Store Credit, etc.)
   const recordServiceJob = (job: {
     name: string;
     category?: string;
@@ -1743,9 +1822,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cost: number;
     customerName?: string;
     notes?: string;
+    paymentMethod?: PaymentMethod;
+    date?: string;
+    time?: string;
+    timestamp?: string;
   }): SaleTransaction => {
     if (!currentUser) {
       throw new Error('Must be logged in to record service jobs');
+    }
+
+    const payMethod = job.paymentMethod || 'cash';
+    if (payMethod === 'store_credit' && !job.customerName?.trim()) {
+      throw new Error('Customer name is required when charging service jobs to Store Credit');
     }
 
     const receiptNum = `JOB-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -1767,10 +1855,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       taxable: true,
     };
 
+    const txTimestamp = job.timestamp || resolveAccurateTimestamp(job.date, job.time);
+
     const newTx: SaleTransaction = {
       id: `tx-${Date.now()}`,
       receiptNumber: receiptNum,
-      timestamp: new Date().toISOString(),
+      timestamp: txTimestamp,
       cashierId: currentUser.id,
       cashierName: currentUser.name,
       customerName: job.customerName?.trim() || undefined,
@@ -1783,18 +1873,60 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       costTotal: job.cost,
       grossProfit,
       payment: {
-        method: 'store_credit',
+        method: payMethod,
       },
       status: 'completed',
-      shiftId: 'internal-records',
+      shiftId: currentShift?.id || 'internal-records',
       notes: job.notes,
     };
 
-    setTransactions((prev) => [newTx, ...prev]);
-    setDoc(doc(db, 'sales', newTx.id), sanitizeForFirestore(newTx))
-      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'sales'));
+    // Update active shift drawer stats if paid in cash
+    if (currentShift && currentShift.status === 'open' && payMethod === 'cash') {
+      setCurrentShift({
+        ...currentShift,
+        cashSales: Number((currentShift.cashSales + total).toFixed(2)),
+        totalSales: Number((currentShift.totalSales + total).toFixed(2)),
+        expectedCash: Number((currentShift.expectedCash + total).toFixed(2)),
+        transactionsCount: currentShift.transactionsCount + 1,
+      });
+    }
+
+    // Automatically link with Credit Ledger if paid on Store Credit
+    if (payMethod === 'store_credit') {
+      try {
+        const debtorName = job.customerName!.trim();
+        recordCreditIssuance({
+          customerName: debtorName,
+          amount: total,
+          itemsSummary: `1x ${job.name}`,
+          saleReceiptNumber: receiptNum,
+          notes: job.notes?.trim() || `Auto-recorded from Service Job #${receiptNum}`,
+          date: job.date,
+          time: job.time,
+        });
+      } catch (err) {
+        console.error('Failed to link service job with credit ledger:', err);
+      }
+    }
+
+    setTransactions((prev) => {
+      const next = [newTx, ...prev];
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}transactions`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    if (!isCloudQuotaExceededRef.current) {
+      setDoc(doc(db, 'sales', newTx.id), sanitizeForFirestore(newTx))
+        .catch(e => {
+          if (!isQuotaExhaustedError(e)) {
+            handleFirestoreError(e, OperationType.WRITE, 'sales');
+          }
+        });
+    }
     setActiveReceipt(null);
-    showToast(`Service Record #${receiptNum} saved to live database across all devices.`);
+    showToast(`Service Record #${receiptNum} saved (${job.name})`);
     return newTx;
   };
 
@@ -1954,13 +2086,163 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             noReceipt,
             receiptPreference: noReceipt ? 'no_receipt' : 'printed',
           };
-          setDoc(doc(db, 'sales', tx.id), sanitizeForFirestore(updated), { merge: true })
-            .catch(e => handleFirestoreError(e, OperationType.WRITE, 'sales'));
+          if (!isCloudQuotaExceededRef.current) {
+            setDoc(doc(db, 'sales', tx.id), sanitizeForFirestore(updated), { merge: true })
+              .catch(e => {
+                if (!isQuotaExhaustedError(e)) {
+                  handleFirestoreError(e, OperationType.WRITE, 'sales');
+                }
+              });
+          }
           return updated;
         }
         return tx;
       })
     );
+  };
+
+  // Reverses a recorded sale: restores merchandise inventory stock, reverses store credit debt, and updates/deletes transaction
+  const reverseSale = async (
+    saleId: string, 
+    reason?: string, 
+    permanentDelete: boolean = false
+  ): Promise<{ success: boolean; error?: string }> => {
+    const sale = transactions.find(t => t.id === saleId);
+    if (!sale) {
+      return { success: false, error: 'Sale record not found' };
+    }
+    if (sale.status === 'refunded' && !permanentDelete) {
+      return { success: false, error: 'Sale has already been reversed/refunded.' };
+    }
+
+    // 1. Restore Inventory Stock for any merchandise items sold
+    if (sale.items && sale.items.length > 0) {
+      const itemsToRestore = sale.items.filter(it => it.type === 'product' || it.productId);
+      if (itemsToRestore.length > 0) {
+        setProducts(prev => {
+          const updated = prev.map(prod => {
+            const matched = itemsToRestore.find(
+              it => (it.productId && it.productId === prod.id) || it.name.toLowerCase() === prod.name.toLowerCase()
+            );
+            if (matched) {
+              const restoredStock = prod.stock + matched.quantity;
+              const updatedProd = { ...prod, stock: restoredStock };
+              markProductPendingSync(prod.id);
+              if (!isCloudQuotaExceededRef.current) {
+                setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(updatedProd), { merge: true })
+                  .catch(e => {
+                    if (!isQuotaExhaustedError(e)) {
+                      handleFirestoreError(e, OperationType.WRITE, 'products');
+                    }
+                  });
+              }
+              return updatedProd;
+            }
+            return prod;
+          });
+          try {
+            localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      }
+    }
+
+    // 2. If purchased via Store Credit, adjust customer credit account balance and cancel credit entry
+    if (sale.payment.method === 'store_credit') {
+      const matchedCreditEntry = creditEntries.find(ce => 
+        (ce.saleReceiptNumber && ce.saleReceiptNumber === sale.receiptNumber) ||
+        (sale.customerName && ce.customerName.toLowerCase() === sale.customerName.toLowerCase() && Math.abs(ce.amount - sale.total) < 0.05)
+      );
+
+      if (matchedCreditEntry) {
+        setCreditAccounts(prev => {
+          const updated = prev.map(acc => {
+            if (acc.id === matchedCreditEntry.customerId || acc.customerName.toLowerCase() === matchedCreditEntry.customerName.toLowerCase()) {
+              const newBalance = Math.max(0, Number((acc.currentBalance - sale.total).toFixed(2)));
+              const upAcc = { ...acc, currentBalance: newBalance, updatedAt: new Date().toISOString() };
+              if (!isCloudQuotaExceededRef.current) {
+                setDoc(doc(db, 'customer_credits', upAcc.id), sanitizeForFirestore(upAcc), { merge: true }).catch(() => {});
+              }
+              return upAcc;
+            }
+            return acc;
+          });
+          try {
+            localStorage.setItem(`${STORAGE_PREFIX}customer_credits`, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+
+        setCreditEntries(prev => {
+          const updated = prev.filter(e => e.id !== matchedCreditEntry.id);
+          try {
+            localStorage.setItem(`${STORAGE_PREFIX}credit_records`, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+
+        if (!isCloudQuotaExceededRef.current) {
+          deleteDoc(doc(db, 'credit_records', matchedCreditEntry.id)).catch(() => {});
+        }
+      }
+    }
+
+    // 3. Adjust current shift drawer cash if active
+    if (currentShift && currentShift.status === 'open' && sale.payment.method === 'cash') {
+      setCurrentShift({
+        ...currentShift,
+        cashSales: Math.max(0, Number((currentShift.cashSales - sale.total).toFixed(2))),
+        totalSales: Math.max(0, Number((currentShift.totalSales - sale.total).toFixed(2))),
+        expectedCash: Math.max(0, Number((currentShift.expectedCash - sale.total).toFixed(2))),
+        transactionsCount: Math.max(0, currentShift.transactionsCount - 1),
+      });
+    }
+
+    // 4. Update or Delete transaction
+    if (permanentDelete) {
+      setTransactions(prev => {
+        const next = prev.filter(t => t.id !== saleId);
+        try {
+          localStorage.setItem(`${STORAGE_PREFIX}transactions`, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      if (!isCloudQuotaExceededRef.current) {
+        deleteDoc(doc(db, 'sales', saleId)).catch(e => {
+          if (!isQuotaExhaustedError(e)) {
+            handleFirestoreError(e, OperationType.DELETE, 'sales');
+          }
+        });
+      }
+      showToast(`Sale #${sale.receiptNumber} permanently deleted and inventory stock restored.`);
+    } else {
+      const updatedTx: SaleTransaction = {
+        ...sale,
+        status: 'refunded',
+        reversedAt: new Date().toISOString(),
+        reversedBy: currentUser?.name || 'Staff',
+        reversalReason: reason || 'Customer requested reversal',
+        notes: `${sale.notes ? sale.notes + ' | ' : ''}REVERSED on ${new Date().toLocaleDateString()} by ${currentUser?.name || 'Staff'}${reason ? ` (${reason})` : ''}`,
+      };
+      setTransactions(prev => {
+        const next = prev.map(t => t.id === saleId ? updatedTx : t);
+        try {
+          localStorage.setItem(`${STORAGE_PREFIX}transactions`, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      if (!isCloudQuotaExceededRef.current) {
+        setDoc(doc(db, 'sales', saleId), sanitizeForFirestore(updatedTx), { merge: true }).catch(e => {
+          if (!isQuotaExhaustedError(e)) {
+            handleFirestoreError(e, OperationType.WRITE, 'sales');
+          }
+        });
+      }
+      showToast(`Sale #${sale.receiptNumber} reversed/refunded. Inventory stock restored.`);
+    }
+
+    return { success: true };
   };
 
   // 2. Record Purchase: Creates supplier PO record & EDITS INVENTORY AUTOMATICALLY (adds stock & updates cost)
@@ -2548,9 +2830,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-    // Immediately write to Firestore & enforce instant sync
-    setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(prod), { merge: true })
-      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+    // Mark pending sync and trigger immediate sync
+    markProductPendingSync(prod.id);
     syncAllProductsToCloud([prod]);
     showToast(`Added "${prod.name}" to inventory.`);
     return prod;
@@ -2630,11 +2911,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await batch.commit();
         }
 
+        markProductsSynced(newCatalog.map(p => p.id));
+        setQuotaExceeded(false);
         const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setLastProductSyncTime(nowFormatted);
         localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'products');
+        if (isQuotaExhaustedError(err)) {
+          newCatalog.forEach(p => markProductPendingSync(p.id));
+          setQuotaExceeded(true);
+          console.warn('[Bulk Import Replace] Cloud daily write quota reached. Catalog is safely active in local storage.');
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, 'products');
+        }
       }
 
       added = newCatalog.length;
@@ -2714,12 +3003,20 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await batch.commit();
       }
 
+      markProductsSynced(docsToWrite.map(p => p.id));
+      setQuotaExceeded(false);
       const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLastProductSyncTime(nowFormatted);
       localStorage.setItem(`${STORAGE_PREFIX}last_product_sync`, nowFormatted);
       setIsCloudConnected(true);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'products');
+      if (isQuotaExhaustedError(err)) {
+        docsToWrite.forEach(p => markProductPendingSync(p.id));
+        setQuotaExceeded(true);
+        console.warn('[Bulk Import] Cloud daily write quota reached. Items are safely saved locally.');
+      } else {
+        handleFirestoreError(err, OperationType.WRITE, 'products');
+      }
     }
 
     showToast(`Bulk Import complete: ${added} added, ${updated} updated.`);
@@ -2734,8 +3031,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-    setDoc(doc(db, 'products', updatedProd.id), sanitizeForFirestore(updatedProd), { merge: true })
-      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+    markProductPendingSync(updatedProd.id);
     syncAllProductsToCloud([updatedProd]);
     showToast(`Updated product ${updatedProd.name}.`);
   };
@@ -2748,19 +3044,24 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
+    markProductsSynced([productId]);
     deleteDoc(doc(db, 'products', productId))
-      .catch(e => handleFirestoreError(e, OperationType.DELETE, 'products'));
+      .catch(e => {
+        if (!isQuotaExhaustedError(e)) {
+          handleFirestoreError(e, OperationType.DELETE, 'products');
+        }
+      });
     showToast('Product removed from catalog.');
   };
 
   const adjustStock = (productId: string, delta: number) => {
+    let targetItem: Product | undefined;
     setProducts(prev => {
       const updated = prev.map(p => {
         if (p.id === productId) {
           const newStock = Math.max(0, p.stock + delta);
           const item = { ...p, stock: newStock };
-          setDoc(doc(db, 'products', productId), sanitizeForFirestore(item), { merge: true })
-            .catch(e => handleFirestoreError(e, OperationType.WRITE, 'products'));
+          targetItem = item;
           return item;
         }
         return p;
@@ -2770,6 +3071,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
+    if (targetItem) {
+      markProductPendingSync(productId);
+      syncAllProductsToCloud([targetItem]);
+    }
     showToast(`Stock updated (${delta > 0 ? `+${delta}` : delta}) across devices.`);
   };
 
@@ -3054,6 +3359,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         // Live Cloud Database (Firestore)
         isCloudConnected,
+        isCloudQuotaExceeded,
 
         // Barcode & QR Scanner
         isScannerOpen,
@@ -3114,6 +3420,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         completeSale,
         recordSale,
         updateSaleReceiptStatus,
+        reverseSale,
         recordPurchase,
         recordExpense,
         deleteExpense,

@@ -65,7 +65,7 @@ export const Header: React.FC<HeaderProps> = () => {
   return (
     <header className="bg-neutral-950/95 border-b border-amber-500/20 select-none sticky top-0 z-40 shadow-md backdrop-blur-md w-full">
       {/* Compact Top Bar: 3 Zones with balanced, streamlined spacing */}
-      <div className="w-full px-2 sm:px-3 lg:px-4 h-11 sm:h-12 flex items-center justify-between gap-1 sm:gap-2">
+      <div className="w-full px-2 sm:px-3 lg:px-4 h-12 sm:h-13 flex items-center justify-between gap-1 sm:gap-2">
         
         {/* Zone 1: Rahel Logo & Brand Wordmark */}
         <button
@@ -85,10 +85,10 @@ export const Header: React.FC<HeaderProps> = () => {
           </div>
         </button>
 
-        {/* Zone 2: Navigation Tabs - Compact segmented nav on desktop/tablet, hidden on mobile in favor of bottom nav */}
+        {/* Zone 2: Navigation Taskbar - Compact icons that smoothly extend on hover */}
         <nav 
-          aria-label="Desktop Navigation"
-          className="hidden md:flex items-center gap-0.5 sm:gap-1 p-0.5 rounded-lg bg-neutral-900/60 border border-neutral-800/80 shrink-0 overflow-x-auto no-scrollbar"
+          aria-label="Desktop Taskbar Navigation"
+          className="hidden md:flex items-center gap-1 p-1 rounded-2xl bg-neutral-900/80 border border-neutral-800/90 shadow-inner backdrop-blur-md shrink-0"
         >
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -97,15 +97,25 @@ export const Header: React.FC<HeaderProps> = () => {
               <button
                 key={item.id}
                 title={item.fullLabel}
+                aria-label={item.label}
                 onClick={() => setActiveTab(item.id)}
-                className={`relative px-1.5 sm:px-2 md:px-2.5 py-1 text-[11px] sm:text-xs font-medium rounded-md transition-all flex items-center gap-1 sm:gap-1.5 whitespace-nowrap cursor-pointer shrink-0 ${
+                className={`group relative h-9 px-2.5 rounded-xl transition-all duration-300 ease-out flex items-center justify-center cursor-pointer shrink-0 overflow-hidden ${
                   isActive
-                    ? 'bg-neutral-800 text-amber-300 font-semibold border border-amber-500/40 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/50'
+                    ? 'bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/40 shadow-xs shadow-amber-500/10'
+                    : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-850 border border-transparent hover:border-neutral-750'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-amber-400' : 'text-neutral-400'}`} />
-                <span className="leading-none">{item.label}</span>
+                <Icon className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${
+                  isActive ? 'text-amber-400' : 'text-neutral-400 group-hover:text-amber-300'
+                }`} />
+                
+                <span className="max-w-0 opacity-0 group-hover:max-w-40 group-hover:opacity-100 group-hover:ml-2 transition-all duration-300 ease-out whitespace-nowrap overflow-hidden text-xs font-semibold select-none leading-none">
+                  {item.label}
+                </span>
+
+                {isActive && (
+                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)] pointer-events-none" />
+                )}
               </button>
             );
           })}

@@ -33,7 +33,8 @@ export const InventoryManager: React.FC = () => {
     scannedInventoryEvent,
     isSyncingProducts,
     lastProductSyncTime,
-    syncAllProductsToCloud
+    syncAllProductsToCloud,
+    isCloudQuotaExceeded
   } = usePOS();
   const lastHandledScanRef = useRef<number>(0);
 
@@ -261,10 +262,17 @@ export const InventoryManager: React.FC = () => {
             Monitor real-time inventory levels, wholesale cost margins, and low stock thresholds in the store.
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 font-mono text-[11px]">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Auto-Sync Active (Every 10s &amp; on insert)
-            </span>
+            {isCloudQuotaExceeded ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/70 border border-amber-700/60 text-amber-300 font-mono text-[11px]" title="Daily free write quota limit reached in Firestore. All your items and changes are safely stored in browser local storage and will sync automatically once quota resets.">
+                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                Local Persistence Active (Cloud Daily Quota Reached — Safe Locally)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 font-mono text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                Auto-Sync Active (Every 10s &amp; on insert)
+              </span>
+            )}
             {lastProductSyncTime && (
               <span className="text-neutral-400 text-xs flex items-center gap-1">
                 Last synced: <span className="font-mono text-neutral-200">{lastProductSyncTime}</span>
@@ -277,8 +285,12 @@ export const InventoryManager: React.FC = () => {
           <button
             type="button"
             onClick={async () => {
-              await syncAllProductsToCloud();
-              showToast('All inventory items synchronized with Firestore Cloud.');
+              await syncAllProductsToCloud(undefined, true);
+              if (isCloudQuotaExceeded) {
+                showToast('Firestore daily quota reached. Catalog is safe in local storage.');
+              } else {
+                showToast('All inventory items synchronized with Firestore Cloud.');
+              }
             }}
             disabled={isSyncingProducts}
             className="px-3 py-2 bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 hover:border-emerald-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
