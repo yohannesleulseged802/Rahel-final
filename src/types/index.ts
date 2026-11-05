@@ -39,6 +39,7 @@ export interface Product {
   unit: string;
   description: string;
   isService?: boolean;
+  updatedAt?: number | string;
 }
 
 export interface ParsedImportItem {

@@ -821,19 +821,81 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const remoteMap = new Map<string, Product>();
           liveProducts.forEach(p => remoteMap.set(p.id, p));
 
-          // Any local items entered by the user that haven't synced yet are strictly preserved
-          const unsyncedLocal = prevLocal.filter(p => !remoteMap.has(p.id));
-          const merged = [...liveProducts, ...unsyncedLocal];
+          // Map local items from in-memory state
+          const localMap = new Map<string, Product>();
+          (Array.isArray(prevLocal) ? prevLocal : []).forEach(p => {
+            if (p && p.id) localMap.set(p.id, p);
+          });
+
+          // Also merge any items from localStorage in case state was initialized earlier
+          try {
+            const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((p: Product) => {
+                  if (p && p.id && !localMap.has(p.id)) {
+                    localMap.set(p.id, p);
+                  }
+                });
+              }
+            }
+          } catch {}
+
+          const merged: Product[] = [];
+          const itemsNeedingSync: Product[] = [];
+
+          // 1. Process all remote products from Firestore
+          liveProducts.forEach(remoteProd => {
+            const localProd = localMap.get(remoteProd.id);
+
+            // If no local record exists, use remote version
+            if (!localProd) {
+              merged.push(remoteProd);
+              return;
+            }
+
+            // CRITICAL: If the local product has pending uncommitted edits, KEEP LOCAL EDITS!
+            if (pendingSyncIdsRef.current.has(remoteProd.id)) {
+              merged.push(localProd);
+              itemsNeedingSync.push(localProd);
+              return;
+            }
+
+            // If local product has a strictly newer timestamp than remote, KEEP LOCAL EDITS!
+            const localTime = typeof localProd.updatedAt === 'number' 
+              ? localProd.updatedAt 
+              : (localProd.updatedAt ? new Date(localProd.updatedAt).getTime() : 0);
+            const remoteTime = typeof remoteProd.updatedAt === 'number' 
+              ? remoteProd.updatedAt 
+              : (remoteProd.updatedAt ? new Date(remoteProd.updatedAt).getTime() : 0);
+
+            if (localTime > remoteTime) {
+              merged.push(localProd);
+              markProductPendingSync(localProd.id);
+              itemsNeedingSync.push(localProd);
+              return;
+            }
+
+            // Otherwise, remote is equal or newer: remote wins
+            merged.push(remoteProd);
+          });
+
+          // 2. Preserve any local products that don't exist in remote at all (newly created offline/local)
+          localMap.forEach((localProd, id) => {
+            if (!remoteMap.has(id)) {
+              merged.push(localProd);
+              markProductPendingSync(id);
+              itemsNeedingSync.push(localProd);
+            }
+          });
 
           try {
             localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(merged));
           } catch (e) {}
 
-          if (unsyncedLocal.length > 0) {
-            unsyncedLocal.forEach(p => markProductPendingSync(p.id));
-            if (!isCloudQuotaExceededRef.current) {
-              syncAllProductsToCloud(unsyncedLocal);
-            }
+          if (itemsNeedingSync.length > 0 && !isCloudQuotaExceededRef.current) {
+            syncAllProductsToCloud(itemsNeedingSync);
           }
           return merged;
         });
@@ -2821,6 +2883,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       minStockAlert: Number(newProd.minStockAlert) >= 0 ? Number(newProd.minStockAlert) : 5,
       unit: newProd.unit || 'each',
       description: newProd.description || '',
+      updatedAt: Date.now(),
     };
     setProducts(prev => {
       const filtered = prev.filter(p => p.id !== prod.id);
@@ -3024,16 +3087,23 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateProduct = (updatedProd: Product) => {
+    const prodWithTimestamp: Product = {
+      ...updatedProd,
+      updatedAt: Date.now(),
+    };
     setProducts(prev => {
-      const updated = prev.map(p => (p.id === updatedProd.id ? updatedProd : p));
+      const exists = prev.some(p => p.id === prodWithTimestamp.id);
+      const updated = exists
+        ? prev.map(p => (p.id === prodWithTimestamp.id ? prodWithTimestamp : p))
+        : [...prev, prodWithTimestamp];
       try {
         localStorage.setItem(`${STORAGE_PREFIX}products`, JSON.stringify(updated));
       } catch (e) {}
       return updated;
     });
-    markProductPendingSync(updatedProd.id);
-    syncAllProductsToCloud([updatedProd]);
-    showToast(`Updated product ${updatedProd.name}.`);
+    markProductPendingSync(prodWithTimestamp.id);
+    syncAllProductsToCloud([prodWithTimestamp]);
+    showToast(`Updated product ${prodWithTimestamp.name}.`);
   };
 
   const deleteProduct = (productId: string) => {
@@ -3060,7 +3130,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map(p => {
         if (p.id === productId) {
           const newStock = Math.max(0, p.stock + delta);
-          const item = { ...p, stock: newStock };
+          const item: Product = { ...p, stock: newStock, updatedAt: Date.now() };
           targetItem = item;
           return item;
         }
