@@ -219,9 +219,11 @@ export const ReportsDashboard: React.FC = () => {
         if (it.type === 'service') {
           let cat = 'Document Printing & Copying';
           if (it.serviceType === 'print_counter') cat = 'End-of-Day Print Counter';
-          else if (it.serviceType === 'somale_print') cat = 'Somale Printing';
-          else if (it.serviceType === 'a1_print') cat = 'A1 Plan & Poster Printing';
-          else if (it.serviceType === 'blueprint_print') cat = 'Blueprint Printing';
+          else if (it.serviceType === 'somali_print' || it.serviceType === 'somale_print') cat = 'Somali Printing';
+          else if (it.serviceType === 'a1_black' || it.serviceType === 'a1_color' || it.serviceType === 'a1_glossy_color' || it.serviceType === 'a1_print') cat = 'A1 Plan & Poster Printing';
+          else if (it.serviceType === 'a2_black' || it.serviceType === 'a2_color' || it.serviceType === 'a2_glossy_color') cat = 'A2 Plan & Poster Printing';
+          else if (it.serviceType === 'a1_blueprint' || it.serviceType === 'a2_blueprint' || it.serviceType === 'blueprint_print') cat = 'Blueprint Printing';
+          else if (it.serviceType === 'a4_color_print' || it.serviceType === 'a4_black_copy_print' || it.serviceType === 'a3_color_print' || it.serviceType === 'a3_copy_print' || it.serviceType === 'print_copy') cat = 'Document Printing & Copying';
           else if (it.serviceType === 'binding') cat = 'Document Finishing & Binding';
           else if (it.serviceType === 'lamination') cat = 'Protective Lamination';
           else if (it.serviceType === 'scanning') cat = 'Scanning & Digital Archival';

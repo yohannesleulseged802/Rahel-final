@@ -68,6 +68,19 @@ export interface BulkImportResult {
 }
 
 export type ServiceType = 
+  | 'a1_black'
+  | 'a2_black'
+  | 'a1_color'
+  | 'a2_color'
+  | 'a1_glossy_color'
+  | 'a2_glossy_color'
+  | 'a1_blueprint'
+  | 'a2_blueprint'
+  | 'somali_print'
+  | 'a4_color_print'
+  | 'a4_black_copy_print'
+  | 'a3_color_print'
+  | 'a3_copy_print'
   | 'print_copy'
   | 'somale_print'
   | 'a1_print'
@@ -78,7 +91,8 @@ export type ServiceType =
   | 'scanning'
   | 'custom_stamp'
   | 'passport_photo'
-  | 'custom_job';
+  | 'custom_job'
+  | (string & {});
 
 export interface ServiceJobConfig {
   serviceType: ServiceType;

@@ -424,14 +424,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return INITIAL_SETTINGS;
   });
 
-  // Products: defaults strictly to [] with filter against demo product IDs
+  // Products: defaults strictly to [] with filter against demo product IDs and deleted products
   const [products, setProducts] = useState<Product[]>(() => {
+    let deletedSet = new Set<string>();
+    try {
+      const savedDeleted = localStorage.getItem(`${STORAGE_PREFIX}deleted_product_ids`);
+      if (savedDeleted) deletedSet = new Set<string>(JSON.parse(savedDeleted));
+    } catch {}
     const saved = localStorage.getItem(`${STORAGE_PREFIX}products`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((p: any) => p && p.id && p.name);
+          return parsed.filter((p: any) => p && p.id && p.name && !deletedSet.has(p.id));
         }
       } catch (e) { /* fallback */ }
     }
@@ -583,7 +588,34 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   })());
 
+  // FOOL-PROOF: Track IDs of products explicitly deleted by the user so remote onSnapshot can NEVER resurrect them
+  const deletedProductIdsRef = useRef<Set<string>>((() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}deleted_product_ids`);
+      return saved ? new Set<string>(JSON.parse(saved)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  })());
+
+  const markProductDeleted = (productId: string) => {
+    deletedProductIdsRef.current.add(productId);
+    pendingSyncIdsRef.current.delete(productId);
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}deleted_product_ids`, JSON.stringify(Array.from(deletedProductIdsRef.current)));
+      localStorage.setItem(`${STORAGE_PREFIX}pending_sync_ids`, JSON.stringify(Array.from(pendingSyncIdsRef.current)));
+    } catch {}
+  };
+
+  const markProductRestored = (productId: string) => {
+    deletedProductIdsRef.current.delete(productId);
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}deleted_product_ids`, JSON.stringify(Array.from(deletedProductIdsRef.current)));
+    } catch {}
+  };
+
   const markProductPendingSync = (productId: string) => {
+    if (deletedProductIdsRef.current.has(productId)) return;
     pendingSyncIdsRef.current.add(productId);
     try {
       localStorage.setItem(`${STORAGE_PREFIX}pending_sync_ids`, JSON.stringify(Array.from(pendingSyncIdsRef.current)));
@@ -603,7 +635,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // If quota was already marked exceeded, avoid repeating write requests unless user explicitly requests forceRetry
     if (isCloudQuotaExceededRef.current && !forceRetry) {
       if (specificProducts && specificProducts.length > 0) {
-        specificProducts.forEach(p => markProductPendingSync(p.id));
+        specificProducts.forEach(p => {
+          if (!deletedProductIdsRef.current.has(p.id)) markProductPendingSync(p.id);
+        });
       }
       return;
     }
@@ -612,7 +646,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let itemsToSync: Product[] = [];
 
     if (specificProducts && specificProducts.length > 0) {
-      itemsToSync = specificProducts.filter(p => p && p.id && p.name);
+      itemsToSync = specificProducts.filter(p => p && p.id && p.name && !deletedProductIdsRef.current.has(p.id));
     } else {
       // 10-second periodic timer call: check if any dirty products are queued
       if (pendingSyncIdsRef.current.size === 0) {
@@ -632,7 +666,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             } catch { return []; }
           })();
 
-      itemsToSync = localProducts.filter((p: Product) => p && p.id && pendingSyncIdsRef.current.has(p.id));
+      itemsToSync = localProducts.filter((p: Product) => 
+        p && p.id && pendingSyncIdsRef.current.has(p.id) && !deletedProductIdsRef.current.has(p.id)
+      );
     }
 
     if (itemsToSync.length === 0) return;
@@ -815,7 +851,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         const liveProducts = snapshot.docs
           .map(d => d.data() as Product)
-          .filter(p => p && p.id && p.name);
+          .filter(p => p && p.id && p.name && !deletedProductIdsRef.current.has(p.id));
 
         setProducts(prevLocal => {
           const remoteMap = new Map<string, Product>();
@@ -824,7 +860,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Map local items from in-memory state
           const localMap = new Map<string, Product>();
           (Array.isArray(prevLocal) ? prevLocal : []).forEach(p => {
-            if (p && p.id) localMap.set(p.id, p);
+            if (p && p.id && !deletedProductIdsRef.current.has(p.id)) localMap.set(p.id, p);
           });
 
           // Also merge any items from localStorage in case state was initialized earlier
@@ -834,7 +870,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               const parsed = JSON.parse(saved);
               if (Array.isArray(parsed)) {
                 parsed.forEach((p: Product) => {
-                  if (p && p.id && !localMap.has(p.id)) {
+                  if (p && p.id && !localMap.has(p.id) && !deletedProductIdsRef.current.has(p.id)) {
                     localMap.set(p.id, p);
                   }
                 });
@@ -847,6 +883,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           // 1. Process all remote products from Firestore
           liveProducts.forEach(remoteProd => {
+            // FOOL-PROOF: If this item was deleted by the user, IGNORE IT COMPLETELY!
+            if (deletedProductIdsRef.current.has(remoteProd.id)) {
+              if (!isCloudQuotaExceededRef.current) {
+                deleteDoc(doc(db, 'products', remoteProd.id)).catch(() => {});
+              }
+              return;
+            }
+
             const localProd = localMap.get(remoteProd.id);
 
             // If no local record exists, use remote version
@@ -883,6 +927,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           // 2. Preserve any local products that don't exist in remote at all (newly created offline/local)
           localMap.forEach((localProd, id) => {
+            if (deletedProductIdsRef.current.has(id)) return;
             if (!remoteMap.has(id)) {
               merged.push(localProd);
               markProductPendingSync(id);
@@ -2893,7 +2938,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-    // Mark pending sync and trigger immediate sync
+    // Mark pending sync and clear any prior deleted flag
+    markProductRestored(prod.id);
     markProductPendingSync(prod.id);
     syncAllProductsToCloud([prod]);
     showToast(`Added "${prod.name}" to inventory.`);
@@ -3091,6 +3137,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...updatedProd,
       updatedAt: Date.now(),
     };
+    markProductRestored(prodWithTimestamp.id);
     setProducts(prev => {
       const exists = prev.some(p => p.id === prodWithTimestamp.id);
       const updated = exists
@@ -3107,6 +3154,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteProduct = (productId: string) => {
+    // 1. FOOL-PROOF: Mark as permanently deleted so onSnapshot and local cache can NEVER resurrect it
+    markProductDeleted(productId);
+
+    // 2. Update state and local storage immediately
     setProducts(prev => {
       const updated = prev.filter(p => p.id !== productId);
       try {
@@ -3114,14 +3165,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-    markProductsSynced([productId]);
-    deleteDoc(doc(db, 'products', productId))
-      .catch(e => {
-        if (!isQuotaExhaustedError(e)) {
-          handleFirestoreError(e, OperationType.DELETE, 'products');
-        }
-      });
-    showToast('Product removed from catalog.');
+
+    // 3. Delete from Firestore if quota permits
+    if (!isCloudQuotaExceededRef.current) {
+      deleteDoc(doc(db, 'products', productId))
+        .catch(e => {
+          if (!isQuotaExhaustedError(e)) {
+            handleFirestoreError(e, OperationType.DELETE, 'products');
+          }
+        });
+    }
+
+    showToast('Product permanently removed from catalog.');
   };
 
   const adjustStock = (productId: string, delta: number) => {
@@ -3231,6 +3286,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem(`${STORAGE_PREFIX}persistent_session`);
       localStorage.removeItem(`${STORAGE_PREFIX}active_session`);
       localStorage.removeItem(`${STORAGE_PREFIX}currentShift`);
+      localStorage.removeItem(`${STORAGE_PREFIX}deleted_product_ids`);
+      localStorage.removeItem(`${STORAGE_PREFIX}pending_sync_ids`);
+      deletedProductIdsRef.current.clear();
+      pendingSyncIdsRef.current.clear();
       sessionStorage.clear();
 
       // Clear all Firestore products
@@ -3348,6 +3407,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem(`${STORAGE_PREFIX}persistent_session`);
       localStorage.removeItem(`${STORAGE_PREFIX}active_session`);
       localStorage.removeItem(`${STORAGE_PREFIX}currentShift`);
+      localStorage.removeItem(`${STORAGE_PREFIX}deleted_product_ids`);
+      localStorage.removeItem(`${STORAGE_PREFIX}pending_sync_ids`);
+      deletedProductIdsRef.current.clear();
+      pendingSyncIdsRef.current.clear();
       sessionStorage.clear();
     } catch (e) {}
 
